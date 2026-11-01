@@ -39,7 +39,7 @@ The server runs as a single container and stores data in SQLite.
 
 ## Contributing
 
-Pull requests are welcome. Before your first pull request is merged you must sign the Contributor License Agreement (CLA) through [CLA Assistant](https://cla-assistant.io/) using your GitHub account. This is a one-time step. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md).
+Pull requests are welcome. Before your first pull request is merged you must sign the Contributor License Agreement (CLA). When you open a pull request, a bot comments with a link to the agreement; you sign by replying to that comment with the sentence it asks for, using your GitHub account. This is a one-time step. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md).
 
 ## License
 
