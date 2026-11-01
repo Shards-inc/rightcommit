@@ -38,7 +38,7 @@ You agree to notify the Maintainers if You become aware of any fact that makes a
 
 ## 7. Process
 
-Signing is done once, with Your GitHub account, through CLA Assistant (https://cla-assistant.io/). The signature applies to all Your future Contributions to the Project until You notify the Maintainers otherwise.
+Signing is done once, with Your GitHub account, by replying to the CLA bot's comment on Your first pull request with the sentence it asks for (see CONTRIBUTING.md). The signature applies to all Your future Contributions to the Project until You notify the Maintainers otherwise.
 
 ---
 
