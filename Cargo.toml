@@ -1,0 +1,57 @@
+[package]
+name = "rightcommit"
+version = "1.0.0"
+edition = "2024"
+license = "FSL-1.1-ALv2"
+description = "Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent. Parallel workflows, full control over every commit, and FinOps that shows exactly what each agent and model costs."
+rust-version = "1.95"
+readme = "README.md"
+homepage = "https://rightcommit.com"
+repository = "https://github.com/rightcommit/rightcommit"
+keywords = ["agents", "workflow", "automation", "ai"]
+categories = ["development-tools", "command-line-utilities"]
+# Anchored patterns with file types: include ignores .gitignore, so loose patterns would pick up
+# local files such as .DS_Store or node_modules/*/LICENSE.
+include = [
+    "/src/**/*.rs", "/src/templates/*.json",
+    "/web/*.css", "/web/*.html", "/web/*.js", "/web/*.svg",
+    "/distribution/assets.json", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/licenses/*.txt", "/licenses/*.md",
+    "/README.md", "/INSTALL*.md", "/HOW_TO_CONFIGURE*.md", "/.github/assets/*.png", "/.github/assets/*.svg",
+]
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+anyhow = "1"
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.38", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+argon2 = "0.5"
+aes-gcm = "0.10"
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+reqwest = { version = "0.13", features = ["json", "query", "form"] }
+pulldown-cmark = "0.13"
+ammonia = "4"
+async-stream = "0.3"
+futures = "0.3"
+libc = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rmcp = { version = "3.8.0", default-features = false, features = ["client", "server", "transport-child-process", "transport-io", "transport-streamable-http-client-reqwest", "reqwest"] }
+swiftide = { version = "=0.32.1", default-features = false, features = ["tree-sitter"] }
+fastembed = { version = "=4.9.1", default-features = false, features = ["ort-download-binaries", "hf-hub-rustls-tls"] }
+lancedb = { version = "=0.41.0", default-features = false }
+arrow-array = "58"
+arrow-schema = "58"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = false
+strip = true

@@ -1,0 +1,15 @@
+{
+  "name": "rightcommit-pi-extensions",
+  "private": true,
+  "description": "Pi packages loaded for every rightcommit user: this folder (web_fetch) and each dependency that is a Pi package (pi-web-search, rpiv-todo)",
+  "pi": {
+    "extensions": ["./web-fetch.ts"]
+  },
+  "dependencies": {
+    "@juicesharp/rpiv-todo": "2.15.0",
+    "@mozilla/readability": "0.6.0",
+    "linkedom": "0.18.15",
+    "pi-web-search": "1.7.0",
+    "turndown": "7.2.4"
+  }
+}

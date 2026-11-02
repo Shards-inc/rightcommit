@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+# Test-only deterministic native CLI. Never put this folder on production PATH.
+import json,sys,pathlib,uuid
+args=sys.argv[1:]
+assert '--sandbox' in args and args[args.index('--sandbox')+1] in ('workspace-write','danger-full-access'), 'Manager must have writable tools'
+prompt=sys.stdin.read()
+assert 'You have read, write and edit tools' in prompt, 'Manager contract must allow file edits'
+context=pathlib.Path('context')
+w=json.loads((context/'workflow.json').read_text())
+manifest=json.loads((context/'manifest.json').read_text())
+conversation=json.loads((context/'conversation.json').read_text())
+sid=args[args.index('resume')+1] if 'resume' in args else 'manager-fixture-'+uuid.uuid4().hex
+if len(conversation)>1: assert 'resume' in args and sid in args, 'Native manager session must resume'
+message=conversation[-1]['text'].lower()
+if not w['nodes'] and 'nuovo workflow' in message:
+ w['nodes']=[{'id':'source','kind':'Source','title':'Repository esempio','source_type':'example','x':80,'y':100},{'id':'agent','kind':'Agent','title':'Redattore','x':80,'y':280},{'id':'task','kind':'Task','title':'Scrivi il brief','agent':'agent','prompt':'Scrivi BRIEF.md con obiettivo, requisiti e criteri di accettazione.','x':300,'y':100},{'id':'review','kind':'Review','title':'Revisiona il brief','agent':'agent','mode':'agent_and_human','x':500,'y':100},{'id':'gate','kind':'Gate','title':'Brief approvato','agent':'agent','prompt':'Controlla chiarezza e completezza.','outcomes':['pass','rework'],'max_rework':2,'x':700,'y':100},{'id':'delivery','kind':'Connection','title':'Consegna locale','provider':'local','operation':'read_ticket','location':'BRIEF.md','x':900,'y':100}]
+ w['edges']=[{'from':'source','to':'agent','kind':'context'},{'from':'agent','to':'task','kind':'context'},{'from':'task','to':'review','kind':'control'},{'from':'review','to':'gate','kind':'control'},{'from':'gate','to':'delivery','kind':'control','outcome':'pass'},{'from':'gate','to':'task','kind':'rework','outcome':'rework'}];w['entry']='task'
+kind='explain'; details={'workflow':None}; summary='Il workflow ha '+str(len(w['nodes']))+' nodi. Le prove della sessione sono disponibili.'
+if 'aggiungi' in message or 'invalida' in message or 'nuovo workflow' in message:
+ kind='create' if 'nuovo workflow' in message else 'edit'
+ node_id='manager-check-'+str(len(w['nodes']))
+ prior=[n for n in w['nodes'] if n['kind'] not in ['Source','Agent','MCP','RAG','Memory','Comment']][-1]
+ w['nodes'].append({'id':node_id,'kind':'Connection','title':'Controllo aggiunto dal manager','provider':'local','operation':'read_ticket','location':'README.md','x':prior.get('x',200)+200,'y':prior.get('y',100)})
+ w['edges'].append({'from':prior['id'],'to':'missing' if 'invalida' in message else node_id,'kind':'control','outcome':''})
+ details={'workflow':w};summary='## Workflow\n\n**Nodo preparato** con il relativo collegamento.\n\n- Risultato nell’editor\n\n```text\nTask -> Controllo\n```\n<script>alert(1)</script>'
+if 'tutti i nodi' in message:
+ kind='create';guide=json.loads((context/'guide.json').read_text());w['nodes']=guide['node_templates'];w['entry']='task';w['edges']=[{'from':'source','to':'agent','kind':'context','outcome':''},{'from':'agent','to':'task','kind':'context','outcome':''},{'from':'task','to':'review','kind':'control','outcome':''},{'from':'review','to':'gate','kind':'control','outcome':''},{'from':'gate','to':'connection','kind':'control','outcome':'pass'},{'from':'gate','to':'task','kind':'rework','outcome':'rework'}];details={'workflow':w};summary='## Tutti i nodi\n\n**Bozza concreta** inserita. Completa le configurazioni mancanti prima di avviare.'
+if 'stato' in message and manifest['current_run']:
+ evidence=json.loads((context/('run-'+manifest['current_run']+'.json')).read_text())
+ summary='Stato verificato: '+evidence['run']['status']+'. Eventi: '+str(len(evidence['events']))+'. Artefatti: '+str(len(evidence['artifacts']))+'.'
+result={'status':'completed','summary':summary,'details':json.dumps(details),'questions':[],'artifacts':[],'decision':kind}
+print(json.dumps({'type':'thread.started','thread_id':sid}))
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'<nodo_result>'+json.dumps(result)+'</nodo_result>'}}))

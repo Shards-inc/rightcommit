@@ -1,0 +1,36 @@
+// Regression: an inspector left behind by another workflow must not overwrite
+// a manager-generated Task that happens to reuse the same node ID.
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync('web/app.js','utf8');
+const start=source.indexOf('function updateInspectorField(field){');
+const end=source.indexOf('function captureInspectorFields()',start);
+assert(start>=0&&end>start);
+const inspector={hidden:false};
+const node={id:'synthesis',prompt:'Manager synthesis using both branches'};
+let saves=0;
+const app={run:null,selected:'synthesis',wf:{id:'new-workflow',nodes:[node]}};
+const context={app,$:()=>inspector,dirty:()=>saves++};
+vm.createContext(context);
+vm.runInContext(source.slice(start,end),context);
+const field={name:'prompt',value:'Stale previous-workflow prompt',disabled:false,form:{id:'node-form',isConnected:true,dataset:{workflowId:'old-workflow',nodeId:'synthesis'}}};
+context.updateInspectorField(field);
+assert.equal(node.prompt,'Manager synthesis using both branches');
+assert.equal(saves,0);
+field.form.dataset.workflowId='new-workflow';inspector.hidden=true;
+context.updateInspectorField(field);
+assert.equal(node.prompt,'Manager synthesis using both branches');
+inspector.hidden=false;app.selected=null;
+context.updateInspectorField(field);
+assert.equal(node.prompt,'Manager synthesis using both branches');
+app.selected='synthesis';field.value='Intentional edit in the active inspector';
+context.updateInspectorField(field);
+assert.equal(node.prompt,field.value);
+assert.equal(saves,1);
+context.updateInspectorField(field);
+assert.equal(saves,1);
+app.run={};field.value='Run must stay frozen';
+context.updateInspectorField(field);
+assert.equal(node.prompt,'Intentional edit in the active inspector');
+console.log('PASS: reused node IDs, hidden/unselected inspectors and frozen runs cannot overwrite a draft; active edits still save');

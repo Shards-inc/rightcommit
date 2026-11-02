@@ -1,0 +1,37 @@
+// Disposable instance; this test uses only a local read-file workflow, no inference.
+const assert=require('node:assert/strict');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18082';
+(async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1050}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+const call=async(path,body)=>{const r=await page.request.fetch(BASE+'/api'+path,{method:body?'POST':'GET',headers:{'X-Nodo-Request':'1'},data:body});assert.equal(r.status(),200,await r.text());return r.json()};
+try{
+ const auth=await call('/auth/status');await call(auth.setup_required?'/auth/register':'/auth/login',{email:'manager-qa@nodo.local',password:'temporary-manager-qa-password'});
+ const w={id:'comments-'+Date.now(),name:'Commenti sul workflow',description:'Annotation test',entry:'read',nodes:[{id:'source',kind:'Source',title:'Source',source_type:'example',x:80,y:100},{id:'read',kind:'Connection',title:'Read file',provider:'local',operation:'read_ticket',location:'README.md',x:320,y:100}],edges:[{from:'source',to:'read',kind:'context'}]};await call('/workflows',w);
+ await page.goto(BASE);await page.locator('#app').waitFor({state:'visible'});await page.locator('#workflow-select').selectOption(w.id);
+ const palette=await page.locator('[data-action=add-node][data-kind=Comment]').boundingBox(),canvas=await page.locator('#graph-canvas').boundingBox();
+ await page.mouse.move(palette.x+palette.width/2,palette.y+palette.height/2);await page.mouse.down();await page.mouse.move(canvas.x+650,canvas.y+280,{steps:12});await page.mouse.up();
+ await page.locator('.comment-text').waitFor({state:'visible'});await page.waitForFunction(()=>document.activeElement?.classList.contains('comment-text'));
+ assert.equal(await page.locator('.comment-node .port').count(),0);
+ const noteId=await page.locator('.comment-node').getAttribute('data-id');const card=page.locator('.comment-node[data-id="'+noteId+'"]');
+ const text='# Decisione\n\n**Testo importante**\n\n- prima\n- seconda\n\n<script>window.noteInjected=1</script>\n[bad](javascript:alert(1))';
+ await card.locator('textarea').fill(text);
+ await card.locator('[data-comment-preview]').click();await card.locator('.comment-preview h1').waitFor({state:'visible'});
+ assert.equal(await card.locator('.comment-preview strong').innerText(),'Testo importante');assert.equal(await card.locator('.comment-preview script').count(),0);assert.equal(await page.evaluate(()=>window.noteInjected),undefined);assert.equal(await card.locator('.comment-preview a[href^="javascript:"]').count(),0);
+ const initial=await card.boundingBox();await page.mouse.move(initial.x+initial.width-3,initial.y+initial.height-3);await page.mouse.down();await page.mouse.move(initial.x+initial.width+95,initial.y+initial.height+57,{steps:15});await page.mouse.up();
+ await page.waitForFunction(id=>app.wf.nodes.find(n=>n.id===id).width>350,noteId);
+ const size=await page.evaluate(id=>{const n=app.wf.nodes.find(n=>n.id===id);return{width:n.width,height:n.height}},noteId);
+ const before=await page.evaluate(id=>app.wf.nodes.find(n=>n.id===id).x,noteId);const header=await card.locator('.comment-header').boundingBox();await page.mouse.move(header.x+70,header.y+14);await page.mouse.down();await page.mouse.move(header.x+130,header.y+65,{steps:12});await page.mouse.up();assert((await page.evaluate(id=>app.wf.nodes.find(n=>n.id===id).x,noteId))>before+30);
+ await page.locator('[data-action=add-node][data-kind=Comment]').click();assert.equal(await page.locator('.comment-node').count(),2);await page.locator('.comment-node textarea').fill('Seconda nota indipendente');
+ await page.locator('#save').click();await page.waitForFunction(()=>!app.dirty);
+ await call('/workflows/validate',await page.evaluate(()=>app.wf));
+ await page.reload();await page.locator('#app').waitFor({state:'visible'});await page.locator('#workflow-select').selectOption(w.id);
+ assert.equal(await page.locator('.comment-node').count(),2);await page.waitForFunction(()=>document.querySelector('.comment-preview h1'));
+ const stored=(await call('/workflows')).find(x=>x.id===w.id).nodes.find(n=>n.id===noteId);assert.equal(stored.text,text);assert.equal(stored.width,size.width);assert.equal(stored.height,size.height);assert.equal(stored.markdown,true);
+ await page.locator('#fit').click();await page.screenshot({path:'/tmp/nodo-comments.png'});
+ await page.locator('#list-tab').click();assert.equal(await page.locator('.step-row[data-kind=Comment]').count(),0);
+ const run=await call('/runs',{workflow_id:w.id});let state;for(let i=0;i<100;i++){state=await call('/runs/'+run.id);if(['completed','failed'].includes(state.run.status))break;await page.waitForTimeout(100)}assert.equal(state.run.status,'completed',state.run.error);assert.equal(state.run.states[noteId],undefined);
+ await page.evaluate(id=>loadRun(id),run.id);await page.locator('#graph-tab').click();assert.equal(await page.locator('.comment-node').count(),2);assert.equal(await page.locator('.comment-node [data-comment-delete]').count(),0);assert(await page.locator('.comment-node textarea').getAttribute('readonly')!==null);
+ await page.locator('.node-main[data-id=read]').click({button:'right'});assert(await page.locator('.node-context-menu').isVisible());assert(await page.locator('.node-context-menu [data-action=delete-node]').isDisabled());
+ await page.locator('[data-action=edit-run-workflow]').click();await page.waitForFunction(()=>!app.run);await page.locator('.node-main[data-id=read]').click({button:'right'});assert(await page.locator('.node-context-menu [data-action=delete-node]').isEnabled());await page.locator('.node-context-menu [data-action=delete-node]').click();assert.equal(await page.locator('.node-main[data-id=read]').count(),0);assert((await call('/runs/'+run.id)).run.workflow.nodes.some(n=>n.id==='read'));
+ assert.deepEqual(errors,[]);console.log(JSON.stringify({pass:true,checks:['palette drag and immediate editing','multiple independent notes','safe Markdown preview','native resizing at graph zoom','header dragging','persistent text geometry and preview mode','no connections or execution steps','real run completes with read-only notes','run context menu returns to editable draft and preserves run snapshot']}));
+}finally{await browser.close()}})().catch(e=>{console.error(e);process.exit(1)});

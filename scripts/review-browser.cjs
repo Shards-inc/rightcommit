@@ -1,0 +1,18 @@
+const fs=require('fs'),assert=require('assert');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const BASE='http://127.0.0.1:18081',report={scope:'Actual local CI and human-review UI, no model inference',checks:[],errors:[]};
+(async()=>{const browser=await chromium.launch({channel:'chrome',headless:true}),page=await browser.newPage({viewport:{width:1440,height:1000}});page.on('pageerror',e=>report.errors.push(e.message));
+const api=async(path,body)=>{const r=body===undefined?await page.request.get(BASE+'/api'+path):await page.request.post(BASE+'/api'+path,{headers:{'X-Nodo-Request':'1'},data:body});const d=await r.json();assert(r.ok(),JSON.stringify(d));return d};
+try{
+const cred=JSON.parse(fs.readFileSync('test-results/container/test-login.json'));await page.goto(BASE);await page.locator('#auth-form [name=email]').fill(cred.email);await page.locator('#auth-form [name=password]').fill(cred.password);await page.locator('#auth-submit').click();await page.locator('#app').waitFor({state:'visible'});
+const name='Review UI fixture '+Date.now(),wf={id:'review-ui-'+Date.now(),name,description:'Local human-review fixture only',entry:'test',nodes:[{id:'source',kind:'Source',title:'Repository esempio',source_type:'example',x:80,y:100},{id:'test',kind:'Connection',title:'Test reali',provider:'local',operation:'test',x:440,y:100},{id:'human',kind:'Review',title:'Review in attesa',mode:'human',prompt:'Verifica della UI di collaudo, nessuna approvazione cliente o produzione.',x:620,y:100}],edges:[{from:'source',to:'test',kind:'context',outcome:''},{from:'test',to:'human',kind:'control',outcome:''}]};
+await api('/workflows',wf);const run=await api('/runs',{workflow_id:wf.id,input:'UI review fixture only'});report.run=run.id;
+await page.locator('#history-tab').click();await page.locator('.history-row').filter({hasText:name}).click();await page.locator('#review-banner').waitFor({state:'visible',timeout:120000});
+const waiting=await api('/runs/'+run.id);assert.equal(waiting.run.status,'waiting_review');assert.equal(waiting.run.states.human,'waiting_review');assert((waiting.run.outputs.test.summary).includes('test result: ok'));
+await page.locator('.node[data-id=human][data-status=waiting_review] .node-wait').waitFor({state:'visible'});assert((await page.locator('#review-banner').innerText()).includes('Review'));await page.screenshot({path:'test-results/review-pending.png'});report.checks.push('Real pending review is visible on the graph and review banner');
+await page.locator('#list-tab').click();assert((await page.locator('.step-row.pending').innerText()).includes('Attende review'));report.checks.push('Execution list highlights the same pending review');
+await page.locator('#review-banner').click();await page.locator('#decision-answer').fill('Automated QA fixture approval only; no customer or production approval.');await page.locator('[data-action=decide][data-value=approve]').click();let complete;
+for(let i=0;i<30;i++){const d=await api('/runs/'+run.id);if(d.run.status==='completed'){complete=d;break}await page.waitForTimeout(300)}
+assert(complete);assert(complete.decisions.some(d=>d.node==='human'&&d.decision==='approve'));assert.equal(Object.keys(complete.run.sessions).length,0);report.checks.push('UI approval resumes the real run and is audited without invoking an agent');assert(!report.errors.length);report.pass=true;
+}catch(e){report.pass=false;report.failure={message:e.message,stack:e.stack};await page.screenshot({path:'test-results/review-browser-failure.png'})}
+fs.writeFileSync('test-results/review-browser.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));await browser.close();if(!report.pass)process.exit(1)})().catch(e=>{console.error(e);process.exit(1)});

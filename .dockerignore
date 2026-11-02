@@ -1,0 +1,15 @@
+# Send the build only what the Dockerfile copies.
+*
+!Cargo.toml
+!Cargo.lock
+!src/
+!web/
+!distribution/
+!examples/
+!pi-extensions/package.json
+!pi-extensions/package-lock.json
+!pi-extensions/.npmrc
+!pi-extensions/web-fetch.ts
+!scripts/install-twg.sh
+**/target
+**/.DS_Store

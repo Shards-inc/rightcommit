@@ -1,0 +1,48 @@
+{
+  "id": "a2a-demo-agent",
+  "name": "A2A · 1 · Agente incidenti (demo)",
+  "description": "Agente A2A locale deterministico: legge e restituisce la scheda INC-1042 inclusa nel repository demo. Nessuna chiamata AI o modifica a servizi esterni.",
+  "entry": "incident",
+  "nodes": [
+    {
+      "id": "source",
+      "kind": "Source",
+      "title": "Repository demo Northstar",
+      "phase": "Contesto",
+      "x": 120,
+      "y": 350,
+      "source_type": "example",
+      "source_mode": "copy"
+    },
+    {
+      "id": "incident",
+      "kind": "Connection",
+      "title": "Leggi incidente INC-1042",
+      "phase": "Demo locale",
+      "x": 420,
+      "y": 350,
+      "provider": "local",
+      "operation": "read_ticket",
+      "location": "incident.json"
+    },
+    {
+      "id": "instructions",
+      "kind": "Comment",
+      "title": "Come provare questo esempio",
+      "text": "## Agente A2A esposto\nQuesto workflow restituisce **incident.json** del progetto demo.\n\nÈ già pubblicato tramite il pulsante **A2A**. Gli output esposti includono soltanto la scheda incidente.\n\nPer provarlo, esegui **A2A · 2 · Client incidenti (demo)**. Non occorrono chiavi AI.",
+      "markdown": true,
+      "x": 100,
+      "y": 30,
+      "width": 640,
+      "height": 240
+    }
+  ],
+  "edges": [
+    {
+      "from": "source",
+      "to": "incident",
+      "kind": "context",
+      "outcome": ""
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+/target
+**/target
+/data
+/node_modules
+/pi-extensions/node_modules
+/.env
+/test-results
+*.log
+.DS_Store
+__pycache__/
+*.py[cod]
+.env.*
+!/.env.example
+/sources/*
+!/sources/.gitkeep
+# Local settings that Claude Code and Codex create when you use them in this folder.
+/.claude/
+/.codex/
+# Internal docs: not part of the published repository.
+/docs/
+/tests/

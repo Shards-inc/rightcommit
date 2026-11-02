@@ -1,46 +1,195 @@
-# RightCommit
+<p align="center">
+  <a href="https://rightcommit.com">
+    <img src=".github/assets/rightcommit-icon.png" alt="rightcommit icon" width="128" height="128">
+  </a>
+</p>
 
-Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent. Parallel workflows, full control over every commit, and FinOps that shows exactly what each agent and model costs.
+<h1 align="center">
+  <a href="https://rightcommit.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://github.com/rightcommit/rightcommit/raw/HEAD/.github/assets/rightcommit-wordmark-dark.svg?sanitize=true">
+      <img src=".github/assets/rightcommit-wordmark-light.svg" alt="rightcommit" width="360" height="72">
+    </picture>
+  </a>
+</h1>
 
-RightCommit helps you organize software work with AI agents (Claude Code, Codex and Pi Agent). It combines a visual canvas for designing workflows with a Rust workflow engine that runs agents and tools, persists execution state and enforces quality gates with bounded rework.
+<p align="center">
+  <strong>AI agents say “done”. rightcommit proves it.</strong>
+</p>
 
-Website: https://rightcommit.com
+<p align="center">
+  Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent.<br>
+  Parallel workflows, full control over every commit, and FinOps that shows exactly what each
+  agent and model costs.
+</p>
 
-## How work gets done
+<p align="center">
+  <a href="https://rightcommit.com"><strong>Website</strong></a> ·
+  <a href="https://github.com/rightcommit/rightcommit"><strong>GitHub</strong></a> ·
+  <a href="#quickstart"><strong>Quickstart</strong></a> ·
+  <a href="#documentation"><strong>Docs</strong></a> ·
+  <a href="#license"><strong>License</strong></a>
+</p>
 
-Nothing is committed until three checks have passed:
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-6254e8" alt="License: FSL-1.1-ALv2"></a>
+  <img src="https://img.shields.io/badge/built%20with-Rust-b7410e" alt="Built with Rust">
+  <img src="https://img.shields.io/badge/runs%20in-one%20container-2496ed" alt="Runs in one container">
+</p>
 
-1. **Automated checks** run by the server.
-2. **A second opinion** from another agent (which can be a different one).
-3. **Your approval.**
+---
 
-Only then is a local Git commit created. The ready-made workflows end with a local commit: they never push, merge or deploy.
+## Why rightcommit
 
-## Features
+AI coding agents are fast, but "done" often means "I stopped". rightcommit puts the agents
+inside a workflow you can see and control: work moves on only when there is proof. The task
+list is complete, the server has run the tests, a second agent has reviewed the result, and
+you have approved it. Only then is a commit made.
 
-- Visual canvas for designing workflows
-- Rust workflow engine with persisted execution state
-- Project Manager assistant that drafts or refines workflows and proposes changes you can apply or undo (it never starts, approves or changes a run)
-- Integrations: GitHub, Azure DevOps, ServiceNow, Jira, Confluence, Bitbucket, plus MCP and A2A. Every write to an external system waits for your confirmation
-- FinOps views of cost per step, agent and model, with reported and estimated costs kept separate
-- Secrets encrypted with AES-256-GCM and never sent back to the browser
+You design the workflow on a visual canvas, or describe it and let the built-in Project
+Manager draft it. A Rust engine runs the agents and tools, keeps the execution state, checks
+the quality and sends work back for fixes when a check fails.
 
-## Quick start
+Learn more at **[rightcommit.com](https://rightcommit.com)**.
 
-Prerequisites: Docker, and a key or login for at least one supported agent.
+## What you get
 
-```bash
+- **Verified outcomes.** Tasks must be ticked, tests run on the server and a second agent
+  (even a different one) reviews the work. If anything changes after the tests, tests and
+  review run again.
+- **Traceable work.** Every step saves its files as versions with a SHA-256 fingerprint and
+  a line-by-line diff. Failed checks send the work back for correction, within a set number
+  of attempts.
+- **Transparent costs.** The FinOps panel shows cost and tokens per step, run, workflow,
+  agent and model. Reported and estimated costs are always kept apart.
+- **A workflow that fits the job.** Three steps or a full delivery pipeline. Start from one
+  of the ready-made workflows, such as Spec Kit specification → plan → tasks → implementation,
+  or build your own.
+- **Your agents, coordinated.** Claude Code, Codex and Pi in one workspace. Each step uses
+  the agent and model you picked, with no silent fallback.
+- **You stay in control.** Run interactively, assisted or unattended. Pause for human
+  decisions and resume where you left off.
+
+## Connections
+
+- **Agents:** Claude Code, Codex and Pi, with an API key, a login or a gateway (Anthropic,
+  OpenAI, OpenRouter, AWS Bedrock, Google Vertex, Microsoft Foundry and more).
+- **Services:** GitHub, Azure DevOps, ServiceNow, and Jira, Confluence and Bitbucket through
+  the Atlassian CLI. Every write to an outside system waits for your confirmation of the
+  exact content.
+- **Open standards:** MCP to give agents tools from your MCP servers, and A2A to publish a
+  workflow that other agents can call.
+
+## Who it's for
+
+- **Developers** running agents on their own laptop, with their own keys.
+- **Consultants** who reuse a method from client to client, with proof of what was done.
+- **Teams** running it on their own servers, with multiple users, separate keys and
+  workspaces.
+
+## Quickstart
+
+You need [Docker](https://www.docker.com/products/docker-desktop/) and a key or login for at
+least one agent (Claude Code, Codex or Pi).
+
+**1. Get rightcommit.**
+
+```sh
+git clone https://github.com/rightcommit/rightcommit.git
+cd rightcommit
+```
+
+No Git? Click **Code** → **Download ZIP** on this page, extract it and open a terminal in the
+extracted folder (the one with `compose.yaml`).
+
+**2. Start the container.**
+
+```sh
 docker compose up -d --build
 ```
 
-Then open http://localhost:8080 and create the first account (the first user becomes admin, public sign-up closes afterwards). In settings add your agent key or login and choose a model. Press **+**, pick a ready-made workflow (or ask the Project Manager) and run it.
+The first build downloads a lot of files and takes a few minutes.
 
-The server runs as a single container and stores data in SQLite.
+**3. Create the first account.** Open <http://localhost:8080>. The first user becomes the
+administrator, and public sign-up closes after that.
 
-## Contributing
+**4. Connect an agent.** Open **Personal settings** → **Agents**, add your key and pick a
+model. Keys are encrypted in the database (AES-256-GCM) and never sent back to the browser.
+For logins, gateways, cloud providers and local models, see
+[Configuring the agents](#configuring-the-agents).
 
-Pull requests are welcome. Before your first pull request is merged you must sign the Contributor License Agreement (CLA). When you open a pull request, a bot comments with a link to the agreement; you sign by replying to that comment with the sentence it asks for, using your GitHub account. This is a one-time step. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md).
+**5. Run a workflow.** Press **+**, choose a ready-made workflow (or ask the Project Manager to
+draft one) and run it.
+
+Useful commands:
+
+| What | Command |
+|---|---|
+| Stop the app | `docker compose down` |
+| Update after getting a new version | `docker compose up -d --build` |
+| Use another port | set `RIGHTCOMMIT_PORT=9090` in a `.env` file, then `docker compose up -d` |
+
+> [!WARNING]
+> Never run `docker compose down -v`: it deletes the `rightcommit-data` volume, with all
+> accounts, workflows and keys.
+
+By default the app listens only on `localhost`. Your code and keys stay on your machine.
+
+## Other ways to install
+
+| Guide | For |
+|---|---|
+| [INSTALL.md](INSTALL.md) | Docker on macOS, Windows and Linux, step by step |
+| [INSTALL_PODMAN.md](INSTALL_PODMAN.md) | Podman instead of Docker |
+| [INSTALL_MAC.md](INSTALL_MAC.md) | macOS without containers, built from source |
+| [INSTALL_LINUX.md](INSTALL_LINUX.md) | Linux and WSL2 without containers, built from source |
+
+## Configuring the agents
+
+| Guide | Covers |
+|---|---|
+| [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) | Claude Code: API key, subscription login, gateways, Bedrock, Vertex, Foundry |
+| [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) | Codex: API key, ChatGPT login, access token, compatible endpoints |
+| [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md) | Pi with Anthropic or OpenAI |
+| [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) | Pi with OpenRouter |
+| [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) | Pi with a local model (Ollama, LM Studio, vLLM) |
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [ADD_A_SKILL.md](ADD_A_SKILL.md) | Give a skill to Claude Code, Codex and Pi in one step |
+| [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md) | Add packages from pi.dev to the Pi agent |
+| [ADD-OPENSPEC.md](ADD-OPENSPEC.md) | Use OpenSpec in your workflows |
+| [UPDATE-PI-DEFAULT-PACKAGES.md](UPDATE-PI-DEFAULT-PACKAGES.md) | Update the Pi tools rightcommit ships (maintainers) |
 
 ## License
 
-RightCommit is licensed under the [Functional Source License, Version 1.1, Apache 2.0 Future License (FSL-1.1-ALv2)](LICENSE). Each version converts to Apache 2.0 two years after its release. Self-hosting is free; you only pay for your own AI model usage.
+rightcommit is [Fair Source](https://fair.io), released under the
+**[Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2)](LICENSE)**.
+
+- You can read, use, modify and share the code, and self-host it for free.
+- Internal use, non-commercial education and research, and professional services for your
+  clients are explicitly permitted.
+- Offering a competing commercial product or service is not permitted.
+- Each version becomes available under the **Apache License 2.0** two years after its release.
+
+See [fsl.software](https://fsl.software) for background on the license.
+
+Third-party notices for bundled icons and Spec Kit files are in [`licenses/`](licenses).
+
+## Contributing
+
+Pull requests are welcome. Before your first one is merged you sign the
+[Contributor License Agreement](CLA.md): a bot comments on the pull request, and you reply with
+the sentence it asks for. You only need to do this once. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Found a bug or have an idea? [Open an issue](https://github.com/rightcommit/rightcommit/issues).
+
+Questions and feedback: [hello@rightcommit.com](mailto:hello@rightcommit.com).
+
+---
+
+<sub>Claude Code, Codex, Pi, GitHub, Azure DevOps, ServiceNow, Jira, Confluence, Bitbucket,
+Spec Kit, Rust, Docker and other names and marks belong to their owners. rightcommit is not
+affiliated with them.</sub>

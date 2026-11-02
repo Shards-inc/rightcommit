@@ -1,0 +1,7 @@
+{
+  "id": "INC-1042",
+  "title": "P1 escalation lost when merged into older P3 ticket",
+  "description": "V1 keeps the oldest priority. Business now approves V2: retain oldest ticket id and sum occurrences, but choose the lowest numeric priority. Add a P1-into-P3 regression and equal-priority tests.",
+  "requested_classification": "spec_change",
+  "severity": "P1"
+}

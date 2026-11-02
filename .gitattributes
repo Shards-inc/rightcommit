@@ -1,0 +1,6 @@
+# Normalize text files. Files that run in Linux shells or containers keep Unix line
+# endings even in a Windows clone, so the image still builds and the scripts still run.
+* text=auto
+*.sh text eol=lf
+Dockerfile text eol=lf
+scripts/fixtures/manager/codex text eol=lf

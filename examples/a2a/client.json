@@ -1,0 +1,64 @@
+{
+  "id": "a2a-demo-client",
+  "name": "A2A · 2 · Client incidenti (demo)",
+  "description": "Legge una richiesta di esempio e richiama il workflow agente attraverso HTTP A2A. Il nodo A2A restituisce la scheda INC-1042. La connessione è già configurata nella stessa installazione.",
+  "entry": "incident",
+  "nodes": [
+    {
+      "id": "source",
+      "kind": "Source",
+      "title": "Repository demo Northstar",
+      "phase": "Contesto",
+      "x": 120,
+      "y": 350,
+      "source_type": "example",
+      "source_mode": "copy"
+    },
+    {
+      "id": "incident",
+      "kind": "Connection",
+      "title": "Prepara richiesta demo",
+      "phase": "Demo locale",
+      "x": 380,
+      "y": 350,
+      "provider": "local",
+      "operation": "read_ticket",
+      "location": "incident.json"
+    },
+    {
+      "id": "remote-agent",
+      "kind": "A2A",
+      "title": "Richiama agente incidenti",
+      "phase": "Chiamata A2A",
+      "x": 680,
+      "y": 350,
+      "a2a_id": "a2a-demo-local",
+      "prompt": "Prova di interoperabilità A2A: restituisci la scheda incidente INC-1042 disponibile nel tuo workflow. Questa demo usa un risultato deterministico e non richiede modelli AI."
+    },
+    {
+      "id": "instructions",
+      "kind": "Comment",
+      "title": "Come provare questo esempio",
+      "text": "## Client A2A pronto\nPremi **Esegui workflow** e conferma l’avvio.\n\nIl primo step legge la richiesta demo; il nodo **A2A** chiama l’agente locale.\n\nRisultato atteso: task remoto completato e artefatto con la scheda **INC-1042**. Nessun costo AI.",
+      "markdown": true,
+      "x": 100,
+      "y": 30,
+      "width": 850,
+      "height": 240
+    }
+  ],
+  "edges": [
+    {
+      "from": "source",
+      "to": "incident",
+      "kind": "context",
+      "outcome": ""
+    },
+    {
+      "from": "incident",
+      "to": "remote-agent",
+      "kind": "control",
+      "outcome": ""
+    }
+  ]
+}
