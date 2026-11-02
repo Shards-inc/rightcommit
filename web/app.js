@@ -12,6 +12,9 @@
   const label=document.createElement('span');label.className='brand-accessible';label.textContent='right';
   prefix.replaceWith(label,slot);
   const row=document.createElement('b');row.textContent='right';reel.append(row);
+  // The slot is as wide as "right", so the wordmark has no gap; longer words overflow to the left.
+  const fit=()=>{const range=document.createRange();range.selectNodeContents(row);const width=range.getBoundingClientRect().width;if(width)slot.style.width=width/parseFloat(getComputedStyle(slot).fontSize)+.05+'em'};
+  new ResizeObserver(fit).observe(brand);document.fonts?.ready.then(fit);
   return {brand,reel,lastRun:null,running:false};
  }).filter(Boolean);
  const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -123,7 +126,7 @@ function appConfirm({title,message,accept='Conferma',danger=false}){
 const closeModal=()=>$('#dialog').close();
 function showAuth(){closeAccountMenu();window.resetTemplateManager?.();app.stream?.close();$('#dialog').close();$$('dialog.app-confirm').forEach(dialog=>dialog.close());$('#app').hidden=true;$('#auth').hidden=false}
 let registerMode=false,authInfo={};async function init(){hydrate();try{authInfo=await api('/auth/status');registerMode=authInfo.setup_required;$('#auth-title').textContent=registerMode?'Crea il tuo workspace':'Accedi al workspace';$('#auth-submit').textContent=registerMode?'Crea amministratore':'Accedi';$('#auth-note').textContent=registerMode?'Il primo account può creare gli altri utenti.':'Ogni account ha workflow, sessioni e credenziali separati.';$('#auth-switch').hidden=!authInfo.registration_open||registerMode;app.user=await api('/auth/me');await boot()}catch(e){showAuth();if(e.message!=='Accedi per continuare')$('#auth-error').textContent=''}}
-async function boot(){resetActivityLogs();latestRun=null;latestRunWorkflow='';++latestRunRequest;app.user=await api('/auth/me');app.settings=await api('/settings');app.workflows=await api('/workflows');await loadWorkflowTopics();await ragRefresh();await a2aRefresh();app.runs=await api('/runs');$('#auth').hidden=true;$('#app').hidden=false;$('#account').textContent=app.user.email[0].toUpperCase();$('#account').dataset.tip=app.user.email;$('#footer-info').textContent=app.user.isolated?'Workspace personali isolati · Sessioni persistenti':'Modalità sviluppo · Isolamento dei file non attivo';workflowOptions();selectWorkflow(pendingDraftId()||workflowOrganization.recent[0]||app.workflows[0]?.id);}
+async function boot(){resetActivityLogs();latestRun=null;latestRunWorkflow='';++latestRunRequest;app.user=await api('/auth/me');app.settings=await api('/settings');app.workflows=await api('/workflows');await loadWorkflowTopics();await ragRefresh();await a2aRefresh();app.runs=await api('/runs');$('#auth').hidden=true;$('#app').hidden=false;$('#account').textContent=app.user.email[0].toUpperCase();$('#account').dataset.tip=app.user.email;$('#footer-info').textContent=app.user.isolated?'Workspace personali isolati · Sessioni persistenti':'Modalità sviluppo · Isolamento dei file non attivo';workflowOptions();selectWorkflow(pendingDraftId()||workflowOrganization.recent[0]);}
 function orderedWorkflows(){return app.workflows.map((w,index)=>({w,index})).sort((a,b)=>(b.w.created||0)-(a.w.created||0)||a.index-b.index).map(x=>x.w)}
 let workflowOrganization={topics:[{id:'unassigned',name:'Unassigned'}],assignments:{},recent:[]};
 let topicRequest=Promise.resolve();

@@ -3,6 +3,22 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.0.2] - 2026-11-02
+
+### Added
+
+- Homebrew bottles for Apple Silicon Macs with macOS 15 or later: `brew install` and
+  `brew upgrade` download rightcommit ready to use instead of compiling it.
+- A new user starts on an empty workflow instead of the first example. The examples are still
+  one click away under **+**.
+
+### Changed
+
+- The login card has a centered header, and the rightcommit wordmark no longer leaves a gap
+  before the logo.
+- The Docker image compiles its dependencies in a separate layer, so rebuilding after a code
+  change takes about a minute.
+
 ## [1.0.1] - 2026-11-02
 
 ### Added
