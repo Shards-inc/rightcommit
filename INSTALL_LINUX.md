@@ -83,13 +83,8 @@ From source, use `cargo +1.95.0 run --locked` wherever this guide says `rightcom
 ## Your own project folders
 
 To work on folders from your computer, use a **Source** node of type **Folder in /sources**.
-Put your project folders in `~/rightcommit/sources` and start rightcommit this way:
-
-```sh
-mkdir -p ~/rightcommit/sources
-cd ~/rightcommit
-NODO_SOURCES="$PWD/sources" rightcommit
-```
+rightcommit creates `~/rightcommit/sources` at its first start: put your project folders
+there. To use another folder, start it with `NODO_SOURCES=/path/to/folder rightcommit`.
 
 ## Open the app
 

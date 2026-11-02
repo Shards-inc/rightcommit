@@ -54,6 +54,23 @@ pub fn tools(data: &Path) -> PathBuf {
     data.join("system/tools/bin")
 }
 
+/// npm packages for the agents, at the versions in distribution/agents.env (shared with the Dockerfile).
+fn agent_packages() -> Vec<String> {
+    let versions: std::collections::HashMap<&str, &str> = include_str!("../distribution/agents.env")
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .filter(|(key, _)| !key.trim_start().starts_with('#'))
+        .collect();
+    [
+        ("@openai/codex", "CODEX_VERSION"),
+        ("@anthropic-ai/claude-code", "CLAUDE_VERSION"),
+        ("@earendil-works/pi-coding-agent", "PI_VERSION"),
+    ]
+    .into_iter()
+    .map(|(package, key)| format!("{package}@{}", versions[key].trim()))
+    .collect()
+}
+
 pub fn setup(data: &Path, assets: &Path) -> Result<()> {
     let prefix = data.join("system/tools");
     let status = Command::new("npm")
@@ -62,10 +79,8 @@ pub fn setup(data: &Path, assets: &Path) -> Result<()> {
         .args([
             "--no-audit",
             "--no-fund",
-            "@openai/codex@0.165.0",
-            "@anthropic-ai/claude-code@2.1.312",
-            "@earendil-works/pi-coding-agent@1.4.0",
         ])
+        .args(agent_packages())
         .status()
         .context("Installa Node.js 24 (almeno 22.19) e rendi npm disponibile nel PATH")?;
     ensure!(
@@ -105,6 +120,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(output, "installed-ok");
+    }
+    #[test]
+    fn agent_versions_come_from_the_shared_file() {
+        let packages = agent_packages();
+        assert_eq!(packages.len(), 3);
+        for (package, prefix) in packages.iter().zip(["@openai/codex@", "@anthropic-ai/claude-code@", "@earendil-works/pi-coding-agent@"]) {
+            let version = package.strip_prefix(prefix).unwrap();
+            assert!(version.split('.').count() == 3 && version.split('.').all(|n| n.parse::<u32>().is_ok()), "{package}");
+        }
+        let dockerfile = include_str!("../Dockerfile");
+        assert!(dockerfile.contains("COPY distribution/agents.env"));
+        assert!(!dockerfile.contains("ARG CODEX_VERSION"));
     }
     #[test]
     fn installed_resources_are_complete_and_persistent() {

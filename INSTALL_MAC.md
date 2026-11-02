@@ -107,14 +107,8 @@ Now go to **[Open the app](#open-the-app)**.
   ```
 
 - **Your own project folders:** to work on folders from your computer, use a **Source** node
-  of type **Folder in /sources**. Put your projects in `~/rightcommit/sources` and start the
-  app this way:
-
-  ```sh
-  mkdir -p ~/rightcommit/sources
-  cd ~/rightcommit
-  NODO_SOURCES="$PWD/sources" rightcommit
-  ```
+  of type **Folder in /sources**. rightcommit creates `~/rightcommit/sources` at its first
+  start: put your projects there.
 
 ## Open the app
 
@@ -190,8 +184,7 @@ cargo +1.95.0 run --locked
 
 - Next time, `cd ~/rightcommit` and `cargo +1.95.0 run --locked` are enough.
 - To update: `git pull`, then `cargo +1.95.0 run --locked -- setup`.
-- Your own project folders go in `~/rightcommit/sources` (Git ignores their content); start
-  with `NODO_SOURCES="$PWD/sources" cargo +1.95.0 run --locked`.
+- Your own project folders go in `~/rightcommit/sources` (Git ignores their content).
 - If you change the examples or extensions, regenerate the bundled resources first with
   `python3 scripts/bundle-assets.py` (new files must be tracked by Git).
 - Optional connections may need extra tools

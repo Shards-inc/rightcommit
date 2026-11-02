@@ -61,6 +61,19 @@ pub struct App {
     pub host_import: bool,
 }
 
+/// Docker mounts the project folder at /sources; a native installation keeps it next to ./data.
+fn sources_dir() -> anyhow::Result<PathBuf> {
+    if let Ok(dir) = std::env::var("NODO_SOURCES") {
+        return Ok(PathBuf::from(dir));
+    }
+    let mounted = PathBuf::from("/sources");
+    if mounted.is_dir() {
+        return Ok(mounted);
+    }
+    std::fs::create_dir_all("sources")?;
+    Ok(std::fs::canonicalize("sources")?)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
@@ -69,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("--help" | "-h") => {
-            println!("rightcommit [setup | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 24 o almeno 22.19, con npm).\nDati: ./data oppure NODO_DATA. Risorse esterne: NODO_ASSETS.");
+            println!("rightcommit [setup | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 24 o almeno 22.19, con npm).\nDati: ./data oppure NODO_DATA. Progetti: ./sources oppure NODO_SOURCES. Risorse esterne: NODO_ASSETS.");
             return Ok(());
         }
         Some("setup" | "mcp-bridge" | "mcp-workspace") | None => {}
@@ -101,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
         rag: Arc::default(),
         data,
         assets,
-        sources: PathBuf::from(std::env::var("NODO_SOURCES").unwrap_or_else(|_| "/sources".into())),
+        sources: sources_dir()?,
         busy: Arc::default(),
         workers: Arc::default(),
         lifecycle: Arc::default(),

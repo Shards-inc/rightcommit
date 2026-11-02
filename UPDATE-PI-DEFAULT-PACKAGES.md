@@ -62,5 +62,6 @@ Commit `pi-extensions/package.json`, `pi-extensions/package-lock.json`,
 
 ## When you update Pi itself
 
-The Pi version is set in the `Dockerfile` (`PI_VERSION`). The default packages use Pi's
-extension API, so after changing it, repeat step 3 to make sure the three tools still load.
+The Pi version is `PI_VERSION` in `distribution/agents.env`, the same file that sets Codex and
+Claude Code for both Docker and `rightcommit setup`. The default packages use Pi's extension
+API, so after changing it, repeat step 3 to make sure the three tools still load.

@@ -158,6 +158,7 @@ By default the app listens only on `localhost`. Your code and keys stay on your 
 
 | Document | What it covers |
 |---|---|
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each version |
 | [ADD_A_SKILL.md](ADD_A_SKILL.md) | Give a skill to Claude Code, Codex and Pi in one step |
 | [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md) | Add packages from pi.dev to the Pi agent |
 | [ADD-OPENSPEC.md](ADD-OPENSPEC.md) | Use OpenSpec in your workflows |
