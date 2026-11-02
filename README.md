@@ -140,9 +140,9 @@ By default the app listens only on `localhost`. Your code and keys stay on your 
 | Guide | For |
 |---|---|
 | [INSTALL.md](INSTALL.md) | Docker on macOS, Windows and Linux, step by step |
-| [INSTALL_PODMAN.md](INSTALL_PODMAN.md) | Podman instead of Docker |
 | [INSTALL_MAC.md](INSTALL_MAC.md) | macOS without containers: Homebrew, crates.io or source |
 | [INSTALL_LINUX.md](INSTALL_LINUX.md) | Linux and WSL2 without containers: crates.io or source |
+| [INSTALL_PODMAN.md](INSTALL_PODMAN.md) | Podman instead of Docker |
 
 ## Configuring the agents
 
