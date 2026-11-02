@@ -1,6 +1,6 @@
 # RightCommit
 
-Self-hosted workflow orchestration for AI coding agents.
+Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent. Parallel workflows, full control over every commit, and FinOps that shows exactly what each agent and model costs.
 
 RightCommit helps you organize software work with AI agents (Claude Code, Codex and Pi Agent). It combines a visual canvas for designing workflows with a Rust workflow engine that runs agents and tools, persists execution state and enforces quality gates with bounded rework.
 
