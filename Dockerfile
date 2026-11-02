@@ -1,13 +1,26 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.95-bookworm AS build
-RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && rm -rf /var/lib/apt/lists/*
+FROM rust:1.95-bookworm AS chef
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /build
+
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY web ./web
 COPY distribution ./distribution
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/build/target \
-    touch src/main.rs && cargo build --locked --release && cp target/release/rightcommit /rightcommit
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS build
+COPY --from=planner /build/recipe.json recipe.json
+# Dependencies only: this layer stays cached until Cargo.toml or Cargo.lock change,
+# so a code change recompiles rightcommit alone (in CI too, through the layer cache).
+RUN cargo chef cook --release --locked --recipe-path recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY web ./web
+COPY distribution ./distribution
+RUN cargo build --locked --release && cp target/release/rightcommit /rightcommit
 
 FROM node:24-bookworm-slim
 COPY distribution/agents.env /tmp/agents.env

@@ -1,0 +1,63 @@
+name: Check Docker image
+on:
+  push:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - compose.yaml
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+      - web/**
+      - distribution/**
+      - examples/**
+      - pi-extensions/**
+      - scripts/install-twg.sh
+      - .github/workflows/docker-check.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - compose.yaml
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+      - web/**
+      - distribution/**
+      - examples/**
+      - pi-extensions/**
+      - scripts/install-twg.sh
+      - .github/workflows/docker-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Docker is how Windows users run rightcommit, so the image is checked whenever its files change.
+jobs:
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Check compose.yaml
+        run: docker compose config --quiet
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: rightcommit-check
+          # mode=max also keeps the compiled dependencies layer, so code changes rebuild only rightcommit.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Start the container and check the agents
+        run: |
+          docker run --detach --name rightcommit-check --publish 127.0.0.1:8080:8080 rightcommit-check
+          curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8080/healthz
+          docker exec rightcommit-check sh -c 'node --version && codex --version && claude --version && pi --version && cargo --version'
+      - name: Container log
+        if: always()
+        run: docker logs rightcommit-check || true

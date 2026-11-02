@@ -45,23 +45,3 @@ jobs:
           cargo install --path "target/package/rightcommit-$version" --debug --locked --root "$RUNNER_TEMP/installed" --target-dir "$PWD/target"
           rm -r "target/package/rightcommit-$version"
           python3 scripts/check-installed.py "$RUNNER_TEMP/installed/bin/rightcommit"
-
-  # Docker is how Windows users run rightcommit, so the image is checked on every push too.
-  docker:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-      - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
-      - name: Check compose.yaml
-        run: docker compose config --quiet
-      - name: Build the image
-        run: docker build --tag rightcommit-check .
-      - name: Start the container and check the agents
-        run: |
-          docker run --detach --name rightcommit-check --publish 127.0.0.1:8080:8080 rightcommit-check
-          curl --fail --silent --show-error --retry 30 --retry-all-errors --retry-delay 2 http://127.0.0.1:8080/healthz
-          docker exec rightcommit-check sh -c 'node --version && codex --version && claude --version && pi --version && cargo --version'
-      - name: Container log
-        if: always()
-        run: docker logs rightcommit-check || true
