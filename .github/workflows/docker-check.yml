@@ -1,6 +1,8 @@
 name: Check Docker image
 on:
+  # Tags point at commits already checked on main.
   push:
+    branches: [main]
     paths:
       - Dockerfile
       - .dockerignore

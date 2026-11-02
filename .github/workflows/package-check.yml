@@ -1,6 +1,8 @@
 name: Check installable package
 on:
+  # Tags point at commits already checked on main.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
