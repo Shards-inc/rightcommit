@@ -44,6 +44,23 @@ rustup toolchain install 1.95.0
 
 ## Step 4 — rightcommit
 
+From crates.io (recommended):
+
+```sh
+cargo +1.95.0 install rightcommit --locked
+mkdir -p ~/rightcommit
+cd ~/rightcommit
+rightcommit setup
+rightcommit
+```
+
+`cargo install` compiles the app, which takes several minutes. `rightcommit setup` then
+downloads the agents (Codex, Claude Code, Pi) into the `data` folder, without `sudo`.
+
+**Keep the terminal open** while you use the app. Now go to **[Open the app](#open-the-app)**.
+
+Or from source, if you want to change the code:
+
 ```sh
 cd ~
 git clone https://github.com/rightcommit/rightcommit.git
@@ -52,19 +69,16 @@ cargo +1.95.0 run --locked -- setup
 cargo +1.95.0 run --locked
 ```
 
-The first `setup` compiles the app, which takes several minutes, then downloads the agents.
-The app and your data live in this `~/rightcommit` folder.
-
-**Keep the terminal open** while you use the app. Now go to **[Open the app](#open-the-app)**.
+From source, use `cargo +1.95.0 run --locked` wherever this guide says `rightcommit`.
 
 ## Everyday use
 
 - **Stop the app:** press **Ctrl + C** in its terminal.
 - **Start it again:** in a new terminal run `. "$HOME/.cargo/env"` and `. "$HOME/.nvm/nvm.sh"`,
-  go to the same folder (`cd ~/rightcommit`) and run `cargo +1.95.0 run --locked`.
+  go to the same folder (`cd ~/rightcommit`) and run `rightcommit`.
   Always start from the same folder: that is where your data lives.
-- **Update:** in `~/rightcommit` run `git pull`, then `cargo +1.95.0 run --locked -- setup`.
-  `setup` downloads agents and extensions into the data folder, without `sudo`.
+- **Update:** repeat `cargo +1.95.0 install rightcommit --locked`, then `rightcommit setup`
+  in `~/rightcommit`. From source: `git pull`, then `cargo +1.95.0 run --locked -- setup`.
 
 ## Your own project folders
 
@@ -72,11 +86,10 @@ To work on folders from your computer, use a **Source** node of type **Folder in
 Put your project folders in `~/rightcommit/sources` and start rightcommit this way:
 
 ```sh
+mkdir -p ~/rightcommit/sources
 cd ~/rightcommit
-NODO_SOURCES="$PWD/sources" cargo +1.95.0 run --locked
+NODO_SOURCES="$PWD/sources" rightcommit
 ```
-
-Git ignores the content of `sources`, so your projects never end up in a commit.
 
 ## Open the app
 
@@ -91,7 +104,7 @@ Done: you can create your first workflow.
 
 | Problem | What to do |
 |---|---|
-| `command not found: cargo` | Run `. "$HOME/.cargo/env"` in the terminal, or open a new one. |
+| `command not found: rightcommit` or `cargo` | Run `. "$HOME/.cargo/env"` in the terminal, or open a new one. |
 | `npm: not found` during setup | Run `. "$HOME/.nvm/nvm.sh"`, or repeat step 2. |
 | The `localhost:8080` page doesn't open | Check that the terminal running rightcommit is still open. |
 | Error about port 8080 already in use | Another app, or another copy of rightcommit (for example in Docker), is using the port. Stop it. |

@@ -57,7 +57,8 @@ Commit `pi-extensions/package.json`, `pi-extensions/package-lock.json`,
 `distribution/assets.json` and, if you changed it, `pi-extensions/web-fetch.ts`.
 
 - **Docker and Podman** users get the update when they rebuild (`up -d --build`).
-- **Local installations** get it with `git pull`, followed by `cargo +1.95.0 run --locked -- setup`.
+- **Local installations** get it with the next release (`brew upgrade rightcommit` or
+  `cargo install`, from source `git pull`), followed by `rightcommit setup`.
 
 ## When you update Pi itself
 
