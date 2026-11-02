@@ -1,9 +1,20 @@
 name: Check installable package
 on:
-  # Tags point at commits already checked on main.
+  # Tags point at commits already checked on main. Changes to the top-level documents, the
+  # license notices and the README images cannot break the build, so they skip the check.
   push:
     branches: [main]
+    paths-ignore:
+      - "*.md"
+      - LICENSE
+      - licenses/**
+      - .github/assets/**
   pull_request:
+    paths-ignore:
+      - "*.md"
+      - LICENSE
+      - licenses/**
+      - .github/assets/**
   workflow_dispatch:
 
 permissions:
@@ -34,6 +45,10 @@ jobs:
         run: brew install protobuf cmake pkgconf openssl@3
       - name: Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal && rustup override set 1.95.0
+      # Keeps the compiled dependencies between runs; only main saves, so pull requests reuse it.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check bundled resources
         run: python3 scripts/bundle-assets.py --check
       - name: Test
