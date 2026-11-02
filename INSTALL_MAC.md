@@ -51,13 +51,10 @@ brew --version
 brew install rightcommit/tap/rightcommit
 ```
 
-Homebrew compiles rightcommit on your Mac: the first time this takes several minutes.
-
-Homebrew also installs Rust to compile rightcommit. Afterwards you can remove it with
-`brew autoremove`: an upgrade installs it again when needed. If you keep it and already use
-[rustup](https://rustup.rs), run `brew unlink rust`, so that your rustup toolchain stays
-first. Workflows on Rust projects, such as the bundled helpdesk example, use the Rust in
-your PATH.
+On Apple Silicon Macs with macOS 15 or later, Homebrew downloads rightcommit ready to use in a
+few seconds. On Intel Macs and older macOS versions it compiles rightcommit, which takes several
+minutes and installs Rust: afterwards `brew autoremove` removes it. Workflows on Rust projects,
+such as the bundled helpdesk example, use the Rust in your PATH ([rustup](https://rustup.rs)).
 
 ### Step 3 — Create the app folder
 
