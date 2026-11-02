@@ -53,6 +53,11 @@ brew install rightcommit/tap/rightcommit
 
 Homebrew compiles rightcommit on your Mac: the first time this takes several minutes.
 
+Homebrew also installs Rust, which it keeps to build future upgrades. Workflows on Rust
+projects, such as the bundled helpdesk example, can use it. If you already use
+[rustup](https://rustup.rs), run `brew unlink rust` once, so that your rustup toolchain stays
+first.
+
 ### Step 3 — Create the app folder
 
 ```sh
@@ -126,7 +131,7 @@ Done: you can create your first workflow.
 | `command not found: brew` | Run the **Next steps** commands shown at the end of the Homebrew installation, then close and reopen Terminal. |
 | `command not found: rightcommit` | Close and reopen Terminal. If that doesn't help, repeat step 2. |
 | `command not found: cargo` (crates.io or source) | Run `source "$HOME/.cargo/env"`. |
-| Errors about `npm` or `node` during setup (crates.io or source) | Run `export PATH="$(brew --prefix node@22)/bin:$PATH"`, then repeat the setup. |
+| Errors about `npm` or `node` during setup (crates.io or source) | Run `export PATH="$(brew --prefix node@24)/bin:$PATH"`, then repeat the setup. |
 | The `localhost:8080` page doesn't open | Check that the Terminal window running rightcommit is still open. |
 | Error about port 8080 already in use | Another app, or another copy of rightcommit (for example in Docker), is using the port. Stop it. |
 | You can't find data you created earlier | Start rightcommit from the same folder as before. Docker and this installation keep separate data. |
@@ -146,7 +151,7 @@ xcode-select --install
 Wait for it to finish (if it is already installed, continue), then:
 
 ```sh
-brew install protobuf node@22 pkg-config openssl cmake ripgrep
+brew install protobuf node@24 pkg-config openssl cmake ripgrep
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 rustup toolchain install 1.95.0
@@ -156,7 +161,7 @@ In **every new Terminal**, before using these options:
 
 ```sh
 source "$HOME/.cargo/env"
-export PATH="$(brew --prefix node@22)/bin:$PATH"
+export PATH="$(brew --prefix node@24)/bin:$PATH"
 ```
 
 ### From crates.io

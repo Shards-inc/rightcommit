@@ -52,7 +52,7 @@ export PATH="$PWD/data/system/tools/bin:$PATH"
 HOME="$PWD/data/users/1" PI_CODING_AGENT_DIR="$PWD/data/users/1/.pi/agent" pi install PACKAGE
 ```
 
-On macOS, first run `export PATH="$(brew --prefix node@22)/bin:$PATH"`.
+On macOS, first run `export PATH="$(brew --prefix node@24)/bin:$PATH"`.
 
 ## Good to know
 

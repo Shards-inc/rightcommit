@@ -24,14 +24,14 @@ On Fedora:
 sudo dnf install -y gcc gcc-c++ make protobuf-compiler protobuf-devel cmake pkgconf-pkg-config openssl-devel git curl python3 ripgrep
 ```
 
-## Step 2 — Node.js 22
+## Step 2 — Node.js 24
 
-Needed to download the agents. Install it with the official `nvm` tool:
+Needed to download and run the agents (Node.js 22.19 or newer also works). Install it with the official `nvm` tool:
 
 ```sh
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 . "$HOME/.nvm/nvm.sh"
-nvm install 22
+nvm install 24
 ```
 
 ## Step 3 — Rust

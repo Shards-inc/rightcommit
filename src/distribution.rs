@@ -67,7 +67,7 @@ pub fn setup(data: &Path, assets: &Path) -> Result<()> {
             "@earendil-works/pi-coding-agent@1.4.0",
         ])
         .status()
-        .context("Installa Node.js 22 e rendi npm disponibile nel PATH")?;
+        .context("Installa Node.js 24 (almeno 22.19) e rendi npm disponibile nel PATH")?;
     ensure!(
         status.success(),
         "Installazione degli agenti fallita; ripeti rightcommit setup"

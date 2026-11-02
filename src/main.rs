@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Some("--help" | "-h") => {
-            println!("rightcommit [setup | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 22/npm).\nDati: ./data oppure NODO_DATA. Risorse esterne: NODO_ASSETS.");
+            println!("rightcommit [setup | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 24 o almeno 22.19, con npm).\nDati: ./data oppure NODO_DATA. Risorse esterne: NODO_ASSETS.");
             return Ok(());
         }
         Some("setup" | "mcp-bridge" | "mcp-workspace") | None => {}

@@ -9,7 +9,7 @@ COPY distribution ./distribution
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/build/target \
     touch src/main.rs && cargo build --locked --release && cp target/release/rightcommit /rightcommit
 
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 ARG CODEX_VERSION=0.165.0
 ARG CLAUDE_VERSION=2.1.312
 ARG PI_VERSION=1.4.0
