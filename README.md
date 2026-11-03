@@ -75,9 +75,8 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
   the agent and model you picked, with no silent fallback. Model-Agnostic by Design.
 - **You stay in control.** Run interactively, assisted or unattended. Pause for human
   decisions and resume where you left off.
-- **Production-Ready Execution**\
-  Move seamlessly from design to deployment with built-in orchestration, human oversight,
-  execution controls, and end-to-end observability.
+- **Beyond Traditional Automation.** Automate business processes with orchestrated AI agents.
+  Run workflows on a schedule, attended or unattended, with human oversight where needed.
 
 ## Connections
 
