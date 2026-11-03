@@ -71,6 +71,16 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
   the agent and model you picked, with no silent fallback.
 - **You stay in control.** Run interactively, assisted or unattended. Pause for human
   decisions and resume where you left off.
+- **Agentic Workflow Orchestration**\
+  Design, execute, and orchestrate intelligent workflows combining AI agents, enterprise
+  data, and external tools. Expose workflows as A2A-compatible agents, enabling seamless
+  interoperability across agentic ecosystems.
+- **Model-Agnostic by Design**\
+  Integrate leading AI providers and open-source models through a flexible architecture
+  that avoids vendor dependencies.
+- **Production-Ready Execution**\
+  Move seamlessly from design to deployment with built-in orchestration, human oversight,
+  execution controls, and end-to-end observability.
 
 ## Connections
 
