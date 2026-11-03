@@ -56,6 +56,10 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
 
 ## What you get
 
+- **Agentic Workflow Orchestration**\
+  Design, execute, and orchestrate intelligent workflows combining AI agents, enterprise
+  data, and external tools. Expose workflows as A2A-compatible agents, enabling seamless
+  interoperability across agentic ecosystems.
 - **Verified outcomes.** Tasks must be ticked, tests run on the server and a second agent
   (even a different one) reviews the work. If anything changes after the tests, tests and
   review run again.
@@ -71,10 +75,6 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
   the agent and model you picked, with no silent fallback. Model-Agnostic by Design.
 - **You stay in control.** Run interactively, assisted or unattended. Pause for human
   decisions and resume where you left off.
-- **Agentic Workflow Orchestration**\
-  Design, execute, and orchestrate intelligent workflows combining AI agents, enterprise
-  data, and external tools. Expose workflows as A2A-compatible agents, enabling seamless
-  interoperability across agentic ecosystems.
 - **Production-Ready Execution**\
   Move seamlessly from design to deployment with built-in orchestration, human oversight,
   execution controls, and end-to-end observability.
