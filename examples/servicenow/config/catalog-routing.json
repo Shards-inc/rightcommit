@@ -1,0 +1,43 @@
+{
+  "schema": "rightcommit.servicenow.catalog.v1",
+  "namespace": "software-requests-demo",
+  "catalog": {
+    "software_installation": {
+      "item_sys_id": "",
+      "variables": {
+        "software_name": {
+          "from": "/fields/software_name"
+        },
+        "software_version": {
+          "from": "/fields/version"
+        },
+        "business_justification": {
+          "from": "/fields/justification"
+        }
+      },
+      "required_variables": [
+        "software_name",
+        "business_justification"
+      ]
+    },
+    "software_license": {
+      "item_sys_id": "",
+      "variables": {
+        "license_product": {
+          "from": "/fields/product"
+        },
+        "requested_for": {
+          "from": "/fields/requested_for_sys_id"
+        },
+        "business_justification": {
+          "from": "/fields/justification"
+        }
+      },
+      "required_variables": [
+        "license_product",
+        "requested_for",
+        "business_justification"
+      ]
+    }
+  }
+}

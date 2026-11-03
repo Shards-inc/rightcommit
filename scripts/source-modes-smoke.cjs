@@ -63,6 +63,7 @@ const BASE=process.env.NODO_TEST_URL||'http://127.0.0.1:18081';
   await page.locator('.node-main[data-id=source]').click();
   assert.equal(await page.locator('#node-form [name=source_mode]').inputValue(),'copy');
   await page.locator('#execute').click();
+  await page.locator('[data-run-now]').click();
   await page.locator('[data-action=start-run]').click();
   await page.locator('.app-confirm').waitFor({state:'visible'});
   await page.locator('.app-confirm [data-confirm-cancel]').first().click();

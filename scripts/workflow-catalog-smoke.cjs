@@ -22,10 +22,10 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await call('/auth/register',{email:'catalog-qa@nodo.local',password:'temporary-catalog-qa-password'});
   await page.goto(base);await page.locator('#app').waitFor({state:'visible'});
   const originals=await call('/workflows');assert.equal(originals.length,2);
-  const templates=await call('/workflow-templates');assert.equal(templates.length,11);
+  const templates=await call('/workflow-templates');assert.equal(templates.length,13);
   assert.deepEqual(templates.slice(0,2).map(t=>t.id),['as-is-sdd-adversarial','as-is-sdd']);
   await page.locator('#new-workflow').click();await page.locator('.workflow-catalog').waitFor();
-  assert.equal(await page.locator('.catalog-section').count(),3);assert.equal(await page.locator('.template-card').count(),11);
+  assert.equal(await page.locator('.catalog-section').count(),3);assert.equal(await page.locator('.template-card').count(),13);
   assert.equal(await page.locator('.template-grid').first().evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length),3);
   for(const lang of ['en','it','en','it']){
    await page.evaluate(lang=>{localStorage.setItem('nodo.language',lang);window.dispatchEvent(new StorageEvent('storage',{key:'nodo.language',newValue:lang}))},lang);
@@ -97,6 +97,6 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   await page.screenshot({path:'/tmp/nodo-template-confirm-mobile.png'});
   await page.keyboard.press('Escape');assert.equal(await page.locator('#dialog').evaluate(e=>e.open),false);
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({pass:true,templates:11,checks:['authenticated catalog','three sections','maximum three columns','original blank dialog','all templates create independent persisted valid graphs','localized confirmation footer','Back, Close and Escape create nothing','required names','editable suggested names','Enter submits','automatic names','unsaved changes persist','double click protection','reload persistence','mobile single column without overflow','Escape closes dialog']}));
+  console.log(JSON.stringify({pass:true,templates:13,checks:['authenticated catalog','three sections','maximum three columns','original blank dialog','all templates create independent persisted valid graphs','localized confirmation footer','Back, Close and Escape create nothing','required names','editable suggested names','Enter submits','automatic names','unsaved changes persist','double click protection','reload persistence','mobile single column without overflow','Escape closes dialog']}));
  }finally{await browser?.close();server.kill('SIGINT');await new Promise(resolve=>server.exitCode!==null||server.signalCode!==null?resolve():server.once('exit',resolve));fs.rmSync(data,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exit(1)});

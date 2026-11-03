@@ -234,6 +234,9 @@ const HOST_SECRETS: &[&str] = &[
     "CODEX_API_KEY",
     "CODEX_ACCESS_TOKEN",
     "OPENROUTER_API_KEY",
+    "XAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "PI_LOCAL_API_KEY",
     "ANTHROPIC_API_KEY",
     "AWS_BEARER_TOKEN_BEDROCK",
     "AWS_ACCESS_KEY_ID",
@@ -280,6 +283,10 @@ pub(crate) fn resolve_provider_environment(
                 env.insert(name.into(), value);
             }
         }
+    }
+    if runtime == "pi" {
+        env.extend(crate::pi_providers::environment(cfg,host));
+        return env;
     }
     if runtime == "claude" {
         for &name in CLAUDE_MODEL_ENV {
@@ -340,22 +347,9 @@ pub(crate) fn resolve_provider_environment(
     {
         env.insert("OPENAI_BASE_URL".into(), url);
     }
-    if runtime == "pi"
-        && cfg.provider == "anthropic"
-        && cfg.api_key.is_empty()
-        && host("ANTHROPIC_BASE_URL").is_none()
-    {
-        for name in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"] {
-            if let Some(token) = host(name) {
-                env.insert(name.into(), token);
-                return env;
-            }
-        }
-    }
     let key_name = match runtime {
         "codex" => "CODEX_API_KEY",
         "claude" => "ANTHROPIC_API_KEY",
-        "pi" => api_key_env(runtime, &cfg.provider),
         _ => return env,
     };
     let key = if !cfg.api_key.is_empty() {
@@ -469,6 +463,9 @@ pub(crate) fn has_provider_credentials(env: &std::collections::BTreeMap<String, 
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "OPENROUTER_API_KEY",
+            "XAI_API_KEY",
+            "DEEPSEEK_API_KEY",
+            "PI_LOCAL_API_KEY",
         ]
         .iter()
         .any(|name| env.contains_key(*name))
@@ -476,6 +473,9 @@ pub(crate) fn has_provider_credentials(env: &std::collections::BTreeMap<String, 
 }
 pub fn redact(s: &str, settings: &Settings) -> String {
     let mut t = s.to_string();
+    for name in crate::pi_providers::catalog().iter().flat_map(|provider|provider.env.iter()).filter(|name|name.contains("KEY")||name.contains("TOKEN")||name.contains("SECRET")) {
+        if let Ok(secret)=std::env::var(name) && !secret.is_empty(){t=t.replace(&secret,"[redacted]");}
+    }
     for &name in HOST_SECRETS {
         if let Ok(secret) = std::env::var(name)
             && !secret.is_empty()
@@ -506,8 +506,18 @@ pub fn redact(s: &str, settings: &Settings) -> String {
         }
     }
     for a in settings.connections.values() {
-        if !a.token.is_empty() {
-            t = t.replace(&a.token, "[redacted]");
+        for secret in [&a.token, &a.password, &a.client_secret] {
+            if !secret.is_empty() { t = t.replace(secret, "[redacted]"); }
+        }
+        if !a.username.is_empty() && !a.token.is_empty() {
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", a.username, a.token));
+            t = t.replace(&encoded, "[redacted]");
+        }
+        if !a.username.is_empty() && !a.password.is_empty() {
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", a.username, a.password));
+            t = t.replace(&encoded, "[redacted]");
         }
     }
     for c in settings.mcp_servers.values() {
@@ -661,6 +671,32 @@ fn pi_packages(extensions: &Path, cfg: &AgentConfig) -> Vec<PathBuf> {
     packages
 }
 
+/// Public failure messages never include provider payloads, partial keys or request URLs.
+pub(crate) fn public_agent_failure(detail: &str) -> &'static str {
+    let text = detail.to_ascii_lowercase();
+    if text.contains("401") || text.contains("incorrect api key") || text.contains("invalid api key") || text.contains("unauthorized") || text.contains("authentication") {
+        "Il provider ha rifiutato le credenziali. Verifica la chiave API e il provider in Personal Settings → Agents, oppure le credenziali in .env."
+    } else if text.contains("insufficient_quota") || text.contains("billing") || text.contains("credit balance") || text.contains("quota exceeded") {
+        "Il credito o la quota del provider è esaurito. Verifica il piano e i limiti del tuo account prima di riprovare."
+    } else if text.contains("429") || text.contains("rate limit") || text.contains("too many requests") {
+        "Il provider sta limitando le richieste. Attendi qualche istante e riprova."
+    } else if text.contains("403") || text.contains("forbidden") || text.contains("permission denied") {
+        "Il provider non consente questa richiesta. Verifica i permessi dell’account e l’accesso al modello selezionato."
+    } else if text.contains("404") || text.contains("model_not_found") || text.contains("model not found") || text.contains("unknown model") {
+        "Il modello o l’endpoint non è disponibile. Verifica provider, modello e URL in Personal Settings → Agents."
+    } else if text.contains("timeout") || text.contains("timed out") {
+        "Il provider non ha risposto in tempo. Puoi riprovare a inviare il messaggio."
+    } else if text.contains("connection") || text.contains("connect") || text.contains("dns") || text.contains("network") || text.contains("fetch failed") {
+        "Impossibile raggiungere il provider. Verifica la connessione e l’URL configurato, poi riprova."
+    } else if text.contains("500") || text.contains("502") || text.contains("503") || text.contains("overloaded") {
+        "Il provider è temporaneamente non disponibile. Riprova tra qualche istante."
+    } else if text.contains("conflicts with") {
+        "Un pacchetto Pi registra uno strumento già presente. Rimuovi il pacchetto in conflitto e riprova."
+    } else {
+        "L’agente non ha completato la risposta. Verifica la configurazione in Personal Settings → Agents e riprova."
+    }
+}
+
 /// Pi refuses to start when two packages register the same tool, which fails every turn.
 pub(crate) fn explain_agent_failure(runtime: &str, detail: String) -> String {
     if runtime == "pi" && detail.contains("conflicts with") {
@@ -722,7 +758,7 @@ pub(crate) fn pi_arguments(
     if !session.model.is_empty() {
         args.extend(["--model".into(), session.model.clone()]);
     }
-    if ["anthropic", "openai", "openrouter"].contains(&cfg.provider.as_str()) {
+    if crate::pi_providers::known(&cfg.provider) {
         args.extend(["--provider".into(), cfg.provider.clone()]);
     }
     if ["off", "minimal", "low", "medium", "high", "xhigh", "max"].contains(&cfg.effort.as_str()) {
@@ -735,16 +771,26 @@ pub struct Turn<'a> {
     pub binding: &'a str,
     pub runtime: &'a str,
     pub model_override: &'a str,
+    pub provider_override: &'a str,
+    pub base_url_override: &'a str,
     pub prompt: &'a str,
 }
-pub(crate) fn api_key_env(runtime: &str, provider: &str) -> &'static str {
-    match (runtime, provider) {
-        ("codex", _) => "CODEX_API_KEY",
-        ("claude", _) => "ANTHROPIC_API_KEY",
-        ("pi", "openai") => "OPENAI_API_KEY",
-        ("pi", "openrouter") => "OPENROUTER_API_KEY",
-        _ => "ANTHROPIC_API_KEY",
+/// A login file can be created empty by Pi; require credentials for the selected provider.
+pub(crate) fn pi_has_login(home: &Path, provider: &str) -> bool {
+    let path=home.join(".pi/agent/auth.json");
+    if path.is_symlink() { return false; }
+    let Some(data)=std::fs::read(path).ok().and_then(|bytes|serde_json::from_slice::<Value>(&bytes).ok()) else { return false; };
+    let value=&data[provider];
+    let nonempty=|field: &str|value[field].as_str().is_some_and(|v|!v.trim().is_empty());
+    match value["type"].as_str() {
+        Some("api_key") => nonempty("key") || value["env"].as_object().is_some_and(|env|env.values().any(|v|v.as_str().is_some_and(|s|!s.trim().is_empty()))),
+        Some("oauth") => nonempty("access") && nonempty("refresh") && value["expires"].is_number(),
+        _ => false,
     }
+}
+pub(crate) fn validate_pi_model(runtime: &str, model: &str) -> Result<()> {
+    ensure!(runtime != "pi" || !model.trim().is_empty(), "Pi richiede un modello esplicito. Configuralo in Personal Settings → Agents → Pi, oppure nel nodo Agent del workflow.");
+    Ok(())
 }
 pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Result<AgentResult> {
     crate::auth::ensure_active(app, uid)?;
@@ -752,12 +798,20 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
         binding,
         runtime,
         model_override,
+        provider_override,
+        base_url_override,
         prompt,
     } = request;
-    let settings = app.store.settings(uid)?;
-    let cfg = settings.agents.get(runtime).cloned().unwrap_or_default();
+    let mut settings = app.store.settings(uid)?;
+    let cfg = if runtime=="pi" {
+        let model=run.sessions.get(binding).map(|session|session.model.as_str()).unwrap_or(model_override);
+        let config=crate::pi_providers::effective(&settings,provider_override,model,base_url_override)?;
+        if config.multi_provider {crate::pi_providers::preflight(app,uid,&settings,provider_override,model,base_url_override)?;}
+        settings.agents.insert("pi".into(),config.clone());config
+    } else {settings.agents.get(runtime).cloned().unwrap_or_default()};
     let mut session = run.sessions.get(binding).cloned().unwrap_or(NativeSession {
-        runtime: runtime.into(),
+        provider: String::new(), base_url: String::new(),
+runtime: runtime.into(),
         native_id: String::new(),
         turns: 0,
         model: if model_override.is_empty() {
@@ -770,6 +824,12 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
         session.runtime == runtime,
         "Il runtime del binding è cambiato: usa un nodo Memory e un nuovo binding"
     );
+    if runtime=="pi" {
+        ensure!(session.provider.is_empty() || session.provider==cfg.provider,"Il provider del binding Pi è cambiato: usa un nuovo binding Agent.");
+        ensure!(session.base_url.is_empty() || session.base_url==cfg.base_url,"L’endpoint del binding Pi è cambiato: usa un nuovo binding Agent.");
+        session.provider=cfg.provider.clone();session.base_url=cfg.base_url.clone();
+    }
+    validate_pi_model(runtime, &session.model)?;
     let workspace = PathBuf::from(&run.workspace);
     let fresh = session.native_id.is_empty();
     let managing = binding == crate::manager::BINDING;
@@ -781,7 +841,9 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
     } else {
         crate::mcp_client::prepare(app, uid, run).await?
     };
-    let settings = app.store.settings(uid)?; // OAuth may have refreshed during MCP preparation.
+    let mut settings = app.store.settings(uid)?; // OAuth may have refreshed during MCP preparation.
+    if runtime=="pi" {settings.agents.insert("pi".into(),cfg.clone());}
+    let read_only = supervising || (managing && !settings.manager_write_enabled);
     let redact_turn = |value: &str| {
         let text = redact(value, &settings);
         if let Some(mcp) = &mcp {
@@ -796,6 +858,7 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
             .env("NODO_MCP_ENDPOINT", &mcp.endpoint);
     }
     crate::compaction::configure(app, uid, runtime, &settings, &mut cmd)?;
+    if runtime == "pi" {crate::pi_local::configure(app,uid,&settings,&session.model,&mut cmd)?;}
     match runtime {
         "codex" => {
             cmd.arg("--no-daemon");
@@ -803,7 +866,7 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
                 "-a",
                 "never",
                 "--sandbox",
-                if supervising {
+                if read_only {
                     "read-only"
                 } else if app.isolate {
                     "danger-full-access"
@@ -841,7 +904,7 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
             cmd.arg("-");
         }
         "claude" => {
-            if supervising {
+            if read_only {
                 cmd.args([
                     "--tools",
                     if template_assistant {
@@ -862,7 +925,7 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
                 "--permission-mode",
                 "acceptEdits",
                 "--allowedTools",
-                "Read,Write,Edit,Glob,Grep,Bash,NotebookEdit,WebFetch,WebSearch",
+                if read_only { "Read,Glob,Grep" } else { "Read,Write,Edit,Glob,Grep,Bash,NotebookEdit,WebFetch,WebSearch" },
             ]);
             if let Some(mcp) = &mcp {
                 let config = serde_json::json!({"mcpServers":{"nodo":{"command":std::env::current_exe()?,"args":["mcp-bridge"],"env":{"NODO_MCP_TOKEN":mcp.token(),"NODO_MCP_ENDPOINT":mcp.endpoint}}}});
@@ -898,7 +961,7 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
                 &user_home(app, uid)?.join(".pi/agent/sessions"),
                 &app.assets.join("pi-extensions"),
             );
-            if supervising && let Some(i) = args.iter().position(|a| a == "--tools") {
+            if read_only && let Some(i) = args.iter().position(|a| a == "--tools") {
                 args[i + 1] = if template_assistant {
                     ""
                 } else {
@@ -960,7 +1023,16 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
     } else {
         CONTRACT
     };
-    let full = format!("{prompt}\n\n{contract}");
+    let permissions = if managing {
+        if settings.manager_write_enabled {
+            "Current permissions: read, write, edit and shell tools are enabled. Use them for files requested by the user. This replaces permissions from earlier turns."
+        } else if runtime == "codex" {
+            "Current permissions: READ ONLY. Shell remains available for read-only inspection. Do not write or edit files or perform dispositive actions. You can still propose workflow graph changes through the structured result. This replaces permissions from earlier turns."
+        } else {
+            "Current permissions: READ ONLY. Do not write or edit files, execute shell commands or perform dispositive actions. You can still propose workflow graph changes through the structured result. This replaces permissions from earlier turns."
+        }
+    } else { "" };
+    let full = format!("{prompt}\n\n{contract}\n\n{permissions}");
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1411,5 +1483,24 @@ fn save_turn_run(app: &App, uid: i64, run: &Run) -> Result<()> {
         app.store.save_run(uid, &live)
     } else {
         app.store.save_run(uid, run)
+    }
+}
+
+#[cfg(test)]
+mod pi_readiness_tests {
+    use super::*;
+    #[test]
+    fn empty_or_unrelated_auth_file_does_not_mark_pi_configured() {
+        let root=tempfile::tempdir().unwrap();let auth=root.path().join(".pi/agent/auth.json");std::fs::create_dir_all(auth.parent().unwrap()).unwrap();
+        assert!(!pi_has_login(root.path(),"anthropic"));
+        for content in ["{}","broken",r#"{"anthropic":{}}"#,r#"{"anthropic":{"type":"api_key","key":""}}"#,r#"{"openai":{"type":"api_key","key":"test-secret"}}"#] {
+            std::fs::write(&auth,content).unwrap();assert!(!pi_has_login(root.path(),"anthropic"));
+        }
+        std::fs::write(&auth,r#"{"anthropic":{"type":"api_key","key":"test-secret"}}"#).unwrap();assert!(pi_has_login(root.path(),"anthropic"));assert!(!pi_has_login(root.path(),"openai"));
+        std::fs::write(&auth,r#"{"anthropic":{"type":"oauth","access":"test-access","refresh":"test-refresh","expires":123}}"#).unwrap();assert!(pi_has_login(root.path(),"anthropic"));
+    }
+    #[test]
+    fn model_is_required_before_pi_launch() {
+        assert!(validate_pi_model("pi","").is_err());assert!(validate_pi_model("pi","  ").is_err());assert!(validate_pi_model("pi","configured-model").is_ok());assert!(validate_pi_model("codex","").is_ok());
     }
 }

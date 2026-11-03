@@ -1,0 +1,377 @@
+{
+  "version": "1.4.0",
+  "providers": [
+    {
+      "id": "amazon-bedrock",
+      "label": "Amazon Bedrock",
+      "key_env": "",
+      "env": [
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_PROFILE",
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AWS_ROLE_ARN",
+        "AWS_ROLE_SESSION_NAME",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"
+      ]
+    },
+    {
+      "id": "ant-ling",
+      "label": "Ant Ling",
+      "key_env": "ANT_LING_API_KEY",
+      "env": [
+        "ANT_LING_API_KEY"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "label": "Anthropic",
+      "key_env": "ANTHROPIC_API_KEY",
+      "env": [
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_OAUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_FEDERATION_RULE_ID",
+        "ANTHROPIC_ORGANIZATION_ID",
+        "ANTHROPIC_SERVICE_ACCOUNT_ID",
+        "ANTHROPIC_IDENTITY_TOKEN_FILE",
+        "ANTHROPIC_WORKSPACE_ID"
+      ]
+    },
+    {
+      "id": "azure",
+      "label": "Azure OpenAI / Foundry",
+      "key_env": "AZURE_OPENAI_API_KEY",
+      "env": [
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_BASE_URL",
+        "AZURE_OPENAI_RESOURCE_NAME",
+        "AZURE_OPENAI_API_VERSION",
+        "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+        "AZURE_CLIENT_ID",
+        "AZURE_TENANT_ID",
+        "AZURE_CLIENT_SECRET",
+        "AZURE_FEDERATED_TOKEN_FILE"
+      ]
+    },
+    {
+      "id": "baseten",
+      "label": "Baseten",
+      "key_env": "BASETEN_API_KEY",
+      "env": [
+        "BASETEN_API_KEY"
+      ]
+    },
+    {
+      "id": "cerebras",
+      "label": "Cerebras",
+      "key_env": "CEREBRAS_API_KEY",
+      "env": [
+        "CEREBRAS_API_KEY"
+      ]
+    },
+    {
+      "id": "cloudflare-ai-gateway",
+      "label": "Cloudflare AI Gateway",
+      "key_env": "CLOUDFLARE_API_KEY",
+      "env": [
+        "CLOUDFLARE_API_KEY",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_GATEWAY_ID"
+      ]
+    },
+    {
+      "id": "cloudflare-workers-ai",
+      "label": "Cloudflare Workers AI",
+      "key_env": "CLOUDFLARE_API_KEY",
+      "env": [
+        "CLOUDFLARE_API_KEY",
+        "CLOUDFLARE_ACCOUNT_ID"
+      ]
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "key_env": "DEEPSEEK_API_KEY",
+      "env": [
+        "DEEPSEEK_API_KEY"
+      ]
+    },
+    {
+      "id": "fireworks",
+      "label": "Fireworks",
+      "key_env": "FIREWORKS_API_KEY",
+      "env": [
+        "FIREWORKS_API_KEY"
+      ]
+    },
+    {
+      "id": "github-copilot",
+      "label": "GitHub Copilot",
+      "key_env": "COPILOT_GITHUB_TOKEN",
+      "env": [
+        "COPILOT_GITHUB_TOKEN"
+      ]
+    },
+    {
+      "id": "google",
+      "label": "Google Gemini",
+      "key_env": "GEMINI_API_KEY",
+      "env": [
+        "GEMINI_API_KEY"
+      ]
+    },
+    {
+      "id": "google-vertex",
+      "label": "Google Vertex AI",
+      "key_env": "GOOGLE_CLOUD_API_KEY",
+      "env": [
+        "GOOGLE_CLOUD_API_KEY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_CLOUD_PROJECT",
+        "GCLOUD_PROJECT",
+        "GOOGLE_CLOUD_LOCATION"
+      ]
+    },
+    {
+      "id": "groq",
+      "label": "Groq",
+      "key_env": "GROQ_API_KEY",
+      "env": [
+        "GROQ_API_KEY"
+      ]
+    },
+    {
+      "id": "huggingface",
+      "label": "Hugging Face",
+      "key_env": "HF_TOKEN",
+      "env": [
+        "HF_TOKEN"
+      ]
+    },
+    {
+      "id": "kimi-coding",
+      "label": "Kimi For Coding",
+      "key_env": "KIMI_API_KEY",
+      "env": [
+        "KIMI_API_KEY"
+      ]
+    },
+    {
+      "id": "meta",
+      "label": "Meta",
+      "key_env": "META_API_KEY",
+      "env": [
+        "META_API_KEY"
+      ]
+    },
+    {
+      "id": "minimax",
+      "label": "Minimax",
+      "key_env": "MINIMAX_API_KEY",
+      "env": [
+        "MINIMAX_API_KEY"
+      ]
+    },
+    {
+      "id": "minimax-cn",
+      "label": "Minimax Cn",
+      "key_env": "MINIMAX_CN_API_KEY",
+      "env": [
+        "MINIMAX_CN_API_KEY"
+      ]
+    },
+    {
+      "id": "mistral",
+      "label": "Mistral",
+      "key_env": "MISTRAL_API_KEY",
+      "env": [
+        "MISTRAL_API_KEY"
+      ]
+    },
+    {
+      "id": "moonshotai",
+      "label": "Moonshotai",
+      "key_env": "MOONSHOT_API_KEY",
+      "env": [
+        "MOONSHOT_API_KEY"
+      ]
+    },
+    {
+      "id": "moonshotai-cn",
+      "label": "Moonshotai Cn",
+      "key_env": "MOONSHOT_API_KEY",
+      "env": [
+        "MOONSHOT_API_KEY"
+      ]
+    },
+    {
+      "id": "nvidia",
+      "label": "NVIDIA NIM",
+      "key_env": "NVIDIA_API_KEY",
+      "env": [
+        "NVIDIA_API_KEY"
+      ]
+    },
+    {
+      "id": "openai",
+      "label": "OpenAI",
+      "key_env": "OPENAI_API_KEY",
+      "env": [
+        "OPENAI_API_KEY"
+      ]
+    },
+    {
+      "id": "openai-codex",
+      "label": "OpenAI Codex",
+      "key_env": "",
+      "env": []
+    },
+    {
+      "id": "opencode",
+      "label": "Opencode",
+      "key_env": "OPENCODE_API_KEY",
+      "env": [
+        "OPENCODE_API_KEY"
+      ]
+    },
+    {
+      "id": "opencode-go",
+      "label": "Opencode Go",
+      "key_env": "OPENCODE_API_KEY",
+      "env": [
+        "OPENCODE_API_KEY"
+      ]
+    },
+    {
+      "id": "openrouter",
+      "label": "OpenRouter",
+      "key_env": "OPENROUTER_API_KEY",
+      "env": [
+        "OPENROUTER_API_KEY"
+      ]
+    },
+    {
+      "id": "qwen-token-plan",
+      "label": "Qwen Token Plan",
+      "key_env": "QWEN_TOKEN_PLAN_API_KEY",
+      "env": [
+        "QWEN_TOKEN_PLAN_API_KEY"
+      ]
+    },
+    {
+      "id": "qwen-token-plan-cn",
+      "label": "Qwen Token Plan Cn",
+      "key_env": "QWEN_TOKEN_PLAN_CN_API_KEY",
+      "env": [
+        "QWEN_TOKEN_PLAN_CN_API_KEY"
+      ]
+    },
+    {
+      "id": "qwen-token-plan-individual",
+      "label": "Qwen Token Plan Individual",
+      "key_env": "QWEN_TOKEN_PLAN_API_KEY",
+      "env": [
+        "QWEN_TOKEN_PLAN_API_KEY"
+      ]
+    },
+    {
+      "id": "radius",
+      "label": "Radius",
+      "key_env": "RADIUS_API_KEY",
+      "env": [
+        "RADIUS_API_KEY"
+      ]
+    },
+    {
+      "id": "together",
+      "label": "Together AI",
+      "key_env": "TOGETHER_API_KEY",
+      "env": [
+        "TOGETHER_API_KEY"
+      ]
+    },
+    {
+      "id": "vercel-ai-gateway",
+      "label": "Vercel AI Gateway",
+      "key_env": "AI_GATEWAY_API_KEY",
+      "env": [
+        "AI_GATEWAY_API_KEY"
+      ]
+    },
+    {
+      "id": "xai",
+      "label": "xAI (Grok)",
+      "key_env": "XAI_API_KEY",
+      "env": [
+        "XAI_API_KEY"
+      ]
+    },
+    {
+      "id": "xiaomi",
+      "label": "Xiaomi",
+      "key_env": "XIAOMI_API_KEY",
+      "env": [
+        "XIAOMI_API_KEY"
+      ]
+    },
+    {
+      "id": "xiaomi-token-plan-ams",
+      "label": "Xiaomi Token Plan Ams",
+      "key_env": "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+      "env": [
+        "XIAOMI_TOKEN_PLAN_AMS_API_KEY"
+      ]
+    },
+    {
+      "id": "xiaomi-token-plan-cn",
+      "label": "Xiaomi Token Plan Cn",
+      "key_env": "XIAOMI_TOKEN_PLAN_CN_API_KEY",
+      "env": [
+        "XIAOMI_TOKEN_PLAN_CN_API_KEY"
+      ]
+    },
+    {
+      "id": "xiaomi-token-plan-sgp",
+      "label": "Xiaomi Token Plan Sgp",
+      "key_env": "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+      "env": [
+        "XIAOMI_TOKEN_PLAN_SGP_API_KEY"
+      ]
+    },
+    {
+      "id": "zai",
+      "label": "ZAI Coding Plan",
+      "key_env": "ZAI_API_KEY",
+      "env": [
+        "ZAI_API_KEY"
+      ]
+    },
+    {
+      "id": "zai-coding-cn",
+      "label": "Zai Coding Cn",
+      "key_env": "ZAI_CODING_CN_API_KEY",
+      "env": [
+        "ZAI_CODING_CN_API_KEY"
+      ]
+    },
+    {
+      "id": "local",
+      "label": "Locale / OpenAI compatibile",
+      "key_env": "PI_LOCAL_API_KEY",
+      "env": [
+        "PI_LOCAL_API_KEY",
+        "PI_LOCAL_BASE_URL"
+      ]
+    }
+  ]
+}

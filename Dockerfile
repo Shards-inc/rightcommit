@@ -44,6 +44,7 @@ COPY --from=build /rightcommit /usr/local/bin/rightcommit
 # MCP example servers saved before the rename still run /usr/local/bin/nodo-studio.
 RUN ln -s rightcommit /usr/local/bin/nodo-studio
 COPY examples /app/examples
+COPY guides /app/guides
 WORKDIR /app
 ENV NODO_DATA=/data NODO_ASSETS=/app NODO_LISTEN=0.0.0.0:8080 NODO_ISOLATE_USERS=1 RUSTUP_HOME=/opt/rustup RUST_LOG=rightcommit=info
 VOLUME /data

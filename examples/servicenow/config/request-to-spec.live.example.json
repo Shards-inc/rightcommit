@@ -1,0 +1,30 @@
+{
+  "schema": "rightcommit.servicenow.requirement.v1",
+  "source": {
+    "mode": "servicenow",
+    "fixture": "fixtures/software-requirement.json",
+    "table": "sc_req_item",
+    "sys_id": "",
+    "number": "",
+    "fields": [
+      "short_description",
+      "description",
+      "state",
+      "cat_item",
+      "requested_for"
+    ],
+    "include_variables": true,
+    "variables_required": true
+  },
+  "specification": {
+    "feature_number": 1,
+    "feature_slug": "software-approval-portal",
+    "mapping": {
+      "title": "/record/short_description",
+      "description": "/record/description",
+      "business_goal": "/variables/business_goal",
+      "acceptance_criteria": "/variables/acceptance_criteria",
+      "constraints": "/variables/constraints"
+    }
+  }
+}

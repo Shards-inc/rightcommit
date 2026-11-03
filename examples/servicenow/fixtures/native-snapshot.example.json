@@ -1,0 +1,27 @@
+{
+  "schema": "rightcommit.servicenow.snapshot.v1",
+  "source_run": "offline-example",
+  "node": "read-request",
+  "provenance": {
+    "mode": "fixture",
+    "instance": null,
+    "table": "sc_req_item",
+    "sys_id": "00000000000000000000000000000001",
+    "number": "RITM-DEMO-0001",
+    "configuration": "config/request-to-spec.json",
+    "variables_status": "fixture",
+    "retrieved_at": 0
+  },
+  "record": {
+    "sys_id": "00000000000000000000000000000001",
+    "number": "RITM-DEMO-0001",
+    "short_description": "Portale approvazione richieste software",
+    "description": "Gli utenti aziendali devono poter richiedere software da un portale. Un responsabile approva o rifiuta ogni richiesta e l’utente consulta lo stato. Il team IT prende in carico solo le richieste approvate.",
+    "state": "1"
+  },
+  "variables": {
+    "business_goal": "Ridurre richieste via email e rendere tracciabili le approvazioni.",
+    "acceptance_criteria": "Un utente invia una richiesta con software e motivazione. Il responsabile può approvare o rifiutare. Lo stato e l’esito sono consultabili dal richiedente. Solo il team IT vede la coda di installazione delle richieste approvate.",
+    "constraints": "Autenticazione aziendale; accesso ai dati limitato per ruolo; storico delle decisioni. Tempi di conservazione e integrazione IAM da chiarire."
+  }
+}

@@ -626,7 +626,8 @@ mod tests {
         r.sessions.insert(
             "author".into(),
             NativeSession {
-                runtime: "pi".into(),
+                provider: String::new(), base_url: String::new(),
+runtime: "pi".into(),
                 native_id: id(),
                 turns: 3,
                 model: "test".into(),

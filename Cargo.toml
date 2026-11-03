@@ -1,6 +1,6 @@
 [package]
 name = "rightcommit"
-version = "1.0.2"
+version = "1.1.0"
 edition = "2024"
 license = "FSL-1.1-ALv2"
 description = "Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent. Parallel workflows, full control over every commit, and FinOps that shows exactly what each agent and model costs."
@@ -15,11 +15,12 @@ categories = ["development-tools", "command-line-utilities"]
 include = [
     "/src/**/*.rs", "/src/templates/*.json",
     "/web/*.css", "/web/*.html", "/web/*.js", "/web/*.svg",
-    "/distribution/assets.json", "/distribution/agents.env", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/licenses/*.txt", "/licenses/*.md",
+    "/distribution/assets.json", "/distribution/agents.env", "/distribution/pi-providers.json", "/.env.example", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/licenses/*.txt", "/licenses/*.md",
     "/README.md", "/CHANGELOG.md", "/INSTALL*.md", "/HOW_TO_CONFIGURE*.md", "/.github/assets/*.png", "/.github/assets/*.svg",
 ]
 
 [dependencies]
+chrono-tz = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 anyhow = "1"
 axum = { version = "0.8", features = ["macros"] }
@@ -48,6 +49,7 @@ fastembed = { version = "=4.9.1", default-features = false, features = ["ort-dow
 lancedb = { version = "=0.41.0", default-features = false }
 arrow-array = "58"
 arrow-schema = "58"
+dotenvy = "0.15.7"
 
 [dev-dependencies]
 tempfile = "3"

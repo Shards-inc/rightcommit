@@ -9,6 +9,15 @@ root = Path(__file__).resolve().parents[1]
 paths = subprocess.check_output(
     ["git", "ls-files", "-z", "examples", "pi-extensions"], cwd=root
 ).decode().split("\0")
+extra = {"examples/itsm/tickets/batch.json", "examples/itsm/config/servicenow.json", "guides/CONFIGURING_SERVICENOW.md"}
+extra.update(path.relative_to(root).as_posix() for path in (root / "guides").rglob("*.md"))
+for path in (root / "examples/servicenow").rglob("*"):
+    relative = path.relative_to(root)
+    if any(part in ("__pycache__", "output", ".git") for part in relative.parts):
+        continue
+    if path.is_file() and (path.suffix in (".json", ".md", ".py", ".sh", ".yml", ".txt") or path.name == ".gitignore"):
+        extra.add(relative.as_posix())
+paths = sorted(set(filter(None, paths)) | extra)
 files = {}
 for name in sorted(filter(None, paths)):
     path = root / name

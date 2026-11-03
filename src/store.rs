@@ -59,6 +59,9 @@ impl Store {
         CREATE TABLE IF NOT EXISTS workflows(id TEXT NOT NULL,user_id INTEGER NOT NULL,json TEXT NOT NULL,PRIMARY KEY(id,user_id));
         CREATE TABLE IF NOT EXISTS manager_chats(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,scope TEXT NOT NULL,json TEXT NOT NULL,busy INTEGER NOT NULL DEFAULT 0,UNIQUE(user_id,scope));
         UPDATE manager_chats SET busy=0;
+        CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,workflow_id TEXT NOT NULL,json TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS schedules_owner ON schedules(user_id,workflow_id);
+        CREATE TABLE IF NOT EXISTS schedule_occurrences(schedule_id TEXT NOT NULL,user_id INTEGER NOT NULL,due INTEGER NOT NULL,run_id TEXT UNIQUE,state TEXT NOT NULL,message TEXT NOT NULL,PRIMARY KEY(schedule_id,due));
         CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,json TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS runs_owner ON runs(user_id);
         CREATE INDEX IF NOT EXISTS runs_workflow ON runs(user_id,json_extract(json,'$.workflow.id'));

@@ -160,6 +160,11 @@ pub fn validate_draft(w: &Workflow) -> Result<()> {
                 && n.height.is_finite(),
             "Configurazione nodo non valida"
         );
+        if n.kind=="Agent" {
+            ensure!(n.pi_provider.is_empty() || crate::pi_providers::known(&n.pi_provider),"Provider Pi non supportato: {}",n.pi_provider);
+            ensure!(n.pi_base_url.len()<=2048,"URL del provider locale non valido");
+            if !n.pi_base_url.is_empty(){crate::pi_local::validate(&AgentConfig {provider:"local".into(),base_url:n.pi_base_url.clone(),..Default::default()})?;}
+        }
         if n.kind == "Comment" {
             ensure!(
                 (n.width == 0.0 || (220.0..=1200.0).contains(&n.width))
@@ -501,9 +506,15 @@ fn reachable(w: &Workflow, a: &str, b: &str) -> bool {
 pub async fn create(
     app: &App,
     uid: i64,
-    mut w: Workflow,
+    w: Workflow,
     input: String,
     base_run: Option<String>,
+) -> Result<Run> {
+    create_reserved(app, uid, w, input, base_run, None).await
+}
+pub async fn create_reserved(
+    app: &App, uid: i64, mut w: Workflow, input: String,
+    base_run: Option<String>, reserved_id: Option<String>,
 ) -> Result<Run> {
     crate::subworkflows::validate_tree(app, uid, &w)?;
     let settings = app.store.settings(uid)?;
@@ -511,8 +522,16 @@ pub async fn create(
         if n.runtime.is_empty() {
             n.runtime = settings.default_runtime.clone();
         }
+        if n.runtime=="pi" {
+            let config=settings.agents.get("pi").cloned().unwrap_or_default();
+            if config.multi_provider {
+                let selected=crate::pi_providers::preflight(app,uid,&settings,&n.pi_provider,&n.model,&n.pi_base_url)
+                    .map_err(|error|anyhow::anyhow!("Agent {}: {error}",n.title))?;
+                n.pi_provider=selected.provider;n.pi_base_url=selected.base_url;n.model=selected.model;
+            } else {n.pi_provider=config.provider;n.pi_base_url=config.base_url;}
+        }
     }
-    let rid = id();
+    let rid = reserved_id.unwrap_or_else(id);
     let home = agents::user_home(app, uid)?;
     let run_folder = home.join("workspaces").join(&rid);
     let mut workspace = run_folder.clone();
@@ -807,10 +826,10 @@ pub(crate) fn save(app: &App, uid: i64, r: &mut Run) -> Result<()> {
     crate::subworkflows::notify_parent(app, uid, r)?;
     Ok(())
 }
-fn runtime(r: &Run, agent: &str) -> Result<(String, String)> {
+fn runtime(r: &Run, agent: &str) -> Result<(String, String, String, String)> {
     let a = r.workflow.node(agent)?;
     ensure!(a.kind == "Agent", "Associazione Agent non valida");
-    Ok((a.runtime.clone(), a.model.clone()))
+    Ok((a.runtime.clone(), a.model.clone(), a.pi_provider.clone(), a.pi_base_url.clone()))
 }
 fn incoming(app: &App, uid: i64, r: &Run) -> Result<String> {
     let sources: Vec<_> = r.workflow.nodes.iter().filter(|n| n.kind == "Source").enumerate().map(|(i,n)| {
@@ -1012,7 +1031,12 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
         if r.status != "running" {
             return Ok(());
         }
-        let n = r.workflow.node(&r.current)?.clone();
+        let mut n = r.workflow.node(&r.current)?.clone();
+        if n.kind == "Connection" && n.provider == "servicenow" && connectors::is_write(&n) {
+            let settings = app.store.settings(uid)?;
+            let config = settings.connections.get("servicenow").context("Configura ServiceNow nelle impostazioni personali")?;
+            n.command = serde_json::to_string(&crate::servicenow::prepare(&n, &r, config)?)?;
+        }
         if r.active_edge.is_none() {
             r.active_edge = r
                 .workflow
@@ -1038,8 +1062,14 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                         "Autorizzare {} su {}? {} Controlla target e artefatti nelle impostazioni e nel run.",
                         n.operation,
                         n.provider,
-                        if n.provider == "atlassian" {
+                        if n.provider == "github" && n.operation == "api_request" {
+                            let settings=app.store.settings(uid)?;
+                            let config=settings.connections.get("github").context("Configura GitHub nelle impostazioni personali")?;
+                            agents::redact(&crate::github_api::preview(&n,config)?, &settings)
+                        } else if n.provider == "atlassian" {
                             format!("twg {}", n.command)
+                        } else if n.provider == "servicenow" {
+                            agents::redact(&n.command, &app.store.settings(uid)?)
                         } else {
                             String::new()
                         }
@@ -1075,7 +1105,7 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 output
             }
             "Task" => {
-                let (rt, model) = runtime(&r, &n.agent)?;
+                let (rt, model, provider, base_url) = runtime(&r, &n.agent)?;
                 let cmd = agents::resolve_command(&n.command, &rt, Path::new(&r.workspace))?;
                 let scope = "Strumenti completi: puoi leggere, scrivere, modificare file ed eseguire comandi necessari nel workspace. Rispetta lo scopo della fase SDD: prepara e correggi i documenti prima dell'implementazione, senza anticipare task futuri non richiesti.";
                 let handoff = r
@@ -1104,6 +1134,8 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                         binding: &n.agent,
                         runtime: &rt,
                         model_override: &model,
+                        provider_override: &provider,
+                        base_url_override: &base_url,
                         prompt: &prompt,
                     },
                 )
@@ -1124,7 +1156,7 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     out
                 } else {
                     if n.mode != "human" {
-                        let (rt, model) = runtime(&r, &n.agent)?;
+                        let (rt, model, provider, base_url) = runtime(&r, &n.agent)?;
                         let prompt = format!(
                             "REVIEW. {}\n{}\nPuoi modificare i file ed eseguire i comandi necessari per verificare e correggere il lavoro. Riporta le modifiche e i test effettivi. Restituisci decision pass oppure rework.",
                             n.prompt,
@@ -1138,6 +1170,8 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                                 binding: &format!("review:{}", n.id),
                                 runtime: &rt,
                                 model_override: &model,
+                        provider_override: &provider,
+                        base_url_override: &base_url,
                                 prompt: &prompt,
                             },
                         )
@@ -1225,7 +1259,7 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     route(app, uid, &mut r, "rework")?;
                     continue;
                 }
-                let (rt, model) = runtime(&r, &n.agent)?;
+                let (rt, model, provider, base_url) = runtime(&r, &n.agent)?;
                 let prompt = format!(
                     "GATE decisionale con strumenti completi. {}\n{}\nEsiti ammessi: {}. Usa esclusivamente un esito nel campo decision. Puoi modificare file ed eseguire comandi necessari; segnala ogni modifica e rivalida il risultato. Se manca una decisione umana usa status needs_input.",
                     n.prompt,
@@ -1240,6 +1274,8 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                         binding: &format!("gate:{}", n.id),
                         runtime: &rt,
                         model_override: &model,
+                        provider_override: &provider,
+                        base_url_override: &base_url,
                         prompt: &prompt,
                     },
                 )
@@ -1382,7 +1418,7 @@ fn join_handoffs(app: &App, uid: i64, r: &mut Run, join: &Node) -> Result<()> {
 }
 
 fn parallel_prompt(app: &App, uid: i64, branch: &Run, task: &Node, fork: &Node) -> Result<String> {
-    let (rt, _) = runtime(branch, &task.agent)?;
+    let (rt, _, _, _) = runtime(branch, &task.agent)?;
     let cmd = agents::resolve_command(&task.command, &rt, Path::new(&branch.workspace))?;
     let handoff = if let Some(source) = branch
         .last_node
@@ -1450,7 +1486,7 @@ async fn execute_parallel(app: &App, uid: i64, r: &mut Run, fork: &Node) -> Resu
             }
             work.push(async move {
                 let result: Result<AgentResult> = async {
-                    let (rt, model) = runtime(&branch, &n.agent)?;
+                    let (rt, model, provider, base_url) = runtime(&branch, &n.agent)?;
                     let prompt = parallel_prompt(app, uid, &branch, &n, fork)?;
                     agents::turn(
                         app,
@@ -1460,6 +1496,8 @@ async fn execute_parallel(app: &App, uid: i64, r: &mut Run, fork: &Node) -> Resu
                             binding: &n.agent,
                             runtime: &rt,
                             model_override: &model,
+                        provider_override: &provider,
+                        base_url_override: &base_url,
                             prompt: &prompt,
                         },
                     )
@@ -2023,5 +2061,32 @@ mod parallel_tests {
         assert!(r.attempts.is_empty());
         assert!(r.outputs["join"].summary.contains("a"));
         assert!(r.outputs["join"].summary.contains("b"));
+    }
+}
+
+#[cfg(test)]
+mod servicenow_approval_tests {
+    use super::*;
+    #[tokio::test]
+    async fn exact_payload_is_reviewed_again_if_plan_changes() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let w:Workflow=serde_json::from_value(serde_json::json!({
+            "id":"native-sn-review","name":"ServiceNow review","description":"test","entry":"write",
+            "nodes":[{"id":"source","kind":"Source","source_type":"example"},
+                {"id":"write","kind":"Connection","provider":"servicenow","operation":"apply_ticket_plan","location":"plan.json"}],
+            "edges":[{"from":"source","to":"write","kind":"context","outcome":""}]
+        })).unwrap();
+        let mut settings=app.store.settings(1).unwrap();settings.connections.insert("servicenow".into(),ConnectionConfig{
+            base_url:"https://dev12345.service-now.com".into(),authentication:"basic".into(),username:"admin".into(),password:"secret-example".into(),..Default::default()});app.store.save_settings(1,&settings).unwrap();
+        let r=create(&app,1,w,"demo".into(),None).await.unwrap();
+        let path=Path::new(&r.workspace).join("plan.json");
+        let mut p=serde_json::json!({"category":"Incident","action":"create_incident","request_id":"demo-1","short_description":"VPN failure","description":"Original description","answer":"KB-001"});
+        std::fs::write(&path,p.to_string()).unwrap();
+        drive(&app,1,&r.id).await.unwrap();let pending=app.store.run(1,&r.id).unwrap().pending.unwrap();
+        assert_eq!(pending.kind,"effect");assert!(pending.questions[0].contains("Original description"));assert!(!pending.questions[0].contains("secret-example"));
+        decide(&app,&User{id:1,email:"test@local".into()},&r.id,"approve","").unwrap();
+        p["description"]=serde_json::json!("Changed after approval");std::fs::write(path,p.to_string()).unwrap();
+        drive(&app,1,&r.id).await.unwrap();let pending=app.store.run(1,&r.id).unwrap().pending.unwrap();
+        assert_eq!(pending.kind,"effect");assert!(pending.questions[0].contains("Changed after approval"));
     }
 }

@@ -157,6 +157,8 @@ pub async fn resolve(app: &App, uid: i64, rid: &str) -> Result<bool> {
                 binding: BINDING,
                 runtime: &rt,
                 model_override: &model,
+                provider_override: "",
+                base_url_override: "",
                 prompt: &prompt,
             },
         )
@@ -246,7 +248,8 @@ mod tests {
         r.sessions.insert(
             BINDING.into(),
             NativeSession {
-                runtime: "codex".into(),
+                provider: String::new(), base_url: String::new(),
+runtime: "codex".into(),
                 native_id: "persisted-supervisor-session".into(),
                 turns: 3,
                 model: "test-model".into(),

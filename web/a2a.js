@@ -3,8 +3,9 @@ let a2aConnections=[];
 async function a2aRefresh(){a2aConnections=await api('/a2a/connections')}
 async function a2aConnectionDialog(){
  await a2aRefresh();
- modal('Connessioni A2A',`<p class="note">Agent Card A2A 1.0 con binding JSONRPC. Le credenziali sono personali e protette.</p><form id="a2a-connection-form">${select('Connessione','id','',[['','Nuova connessione'],...a2aConnections.map(c=>[c.id,c.name])])}${input('Nome','name','')}${input('URL Agent Card','url','','url')}${input('Token Bearer (vuoto = conserva quello salvato)','token','','password')}</form>`,'<button data-action="a2a-save-connection" class="primary">Salva connessione</button>');
- $('#a2a-connection-form [name=id]').onchange=e=>{const c=a2aConnections.find(c=>c.id===e.target.value);for(const k of ['name','url'])$('#a2a-connection-form [name='+k+']').value=c?.[k]||''};
+ modal('Connessioni A2A',`<p class="note">Agent Card A2A 1.0 con binding JSONRPC. Le credenziali sono personali e protette.</p><form id="a2a-connection-form" autocomplete="off">${select('Connessione','id','',[['','Nuova connessione'],...a2aConnections.map(c=>[c.id,c.name])])}${input('Nome','name','')}${input('URL Agent Card','url','','url')}${credentialField('Token Bearer (vuoto = conserva quello salvato)','token','Rimuovi token salvato')}</form>`,'<button data-action="a2a-save-connection" class="primary">Salva connessione</button>');
+ const form=$('#a2a-connection-form');trackSettingsEdits(form);form.connectionRevision='new';
+ $('#a2a-connection-form [name=id]').onchange=e=>{const c=a2aConnections.find(c=>c.id===e.target.value);for(const k of ['name','url']){const field=$('#a2a-connection-form [name='+k+']');field.value=c?.[k]||'';form.settingsInitialData.set(k,field.value)}form.elements.token.value='';form.settingsEditedFields.delete('token');form.connectionRevision=c?._revision||'new'};
 }
 async function a2aPublicationDialog(){
  if(app.run)throw Error('Torna alla progettazione per configurare A2A');
@@ -18,7 +19,7 @@ document.addEventListener('click',async e=>{
  const b=e.target.closest('[data-action]');if(!b)return;
  try{switch(b.dataset.action){
  case 'a2a-connections':await a2aConnectionDialog();break;
- case 'a2a-save-connection':{const f=$('#a2a-connection-form');if(!f.reportValidity())return;await api('/a2a/connections',Object.fromEntries(new FormData(f)));await a2aRefresh();closeModal();renderInspector();toast('Connessione A2A salvata');break;}
+ case 'a2a-save-connection':{const f=$('#a2a-connection-form');if(!f.reportValidity())return;await api('/a2a/connections',{...Object.fromEntries(settingsDraftData(f)),_revision:f.connectionRevision});await a2aRefresh();closeModal();renderInspector();toast('Connessione A2A salvata');break;}
  case 'a2a-probe':{const id=$('#node-form [name=a2a_id]').value;if(!id)throw Error('Seleziona una connessione');const card=await api('/a2a/connections/'+id+'/probe',{});toast('Agente disponibile: '+card.name);break;}
  case 'a2a-publish':{const f=$('#a2a-publication-form');if(!f.reportValidity())return;const d=Object.fromEntries(new FormData(f));d.enabled=d.enabled==='true';d.rotate=d.rotate==='true';d.outputs=new FormData(f).getAll('outputs');const r=await api('/a2a/workflows/'+app.wf.id,d);if(r.token){modal('Token A2A creato',`<p>Copialo ora: non verrà mostrato di nuovo.</p><textarea readonly rows="3">${esc(r.token)}</textarea>`,'<button data-action="close-dialog">Chiudi</button>')}else{closeModal();toast('Esposizione A2A aggiornata')}break;}
  }}catch(error){toast(error.message)}

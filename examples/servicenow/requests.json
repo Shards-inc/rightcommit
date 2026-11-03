@@ -1,0 +1,25 @@
+{
+  "namespace": "software-requests-demo",
+  "tickets": [
+    {
+      "request_id": "software-python-001",
+      "description": "Installare Python per le attività di sviluppo del team demo.",
+      "catalog_route": "software_installation",
+      "fields": {
+        "software_name": "Python",
+        "version": "3.12",
+        "justification": "Test funzionale sulla PDI"
+      }
+    },
+    {
+      "request_id": "license-editor-001",
+      "description": "Richiesta licenza editor per il team demo.",
+      "catalog_route": "software_license",
+      "fields": {
+        "product": "Demo editor",
+        "requested_for_sys_id": "",
+        "justification": "Test instradamento seconda Request"
+      }
+    }
+  ]
+}

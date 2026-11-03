@@ -19,6 +19,16 @@ use std::{
 pub const BINDING: &str = "template-assistant";
 static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NodeText {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Text {
     pub title: String,
@@ -28,6 +38,8 @@ pub struct Text {
     pub prerequisites: String,
     pub outputs: String,
     pub limitations: String,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub nodes: BTreeMap<String, NodeText>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SectionContent {
@@ -79,6 +91,19 @@ pub struct Catalog {
 pub fn seed() -> Catalog {
     serde_json::from_str(include_str!("templates/workflow-templates.json"))
         .expect("valid bundled catalog")
+}
+/// Resolve only explicit report-language placeholders in the immutable run snapshot.
+/// The saved workflow and technical fields remain unchanged.
+pub fn resolve_report_language(w: &mut Workflow, locale: Option<&str>) -> Result<()> {
+    let language = match locale.unwrap_or("en") {
+        "it" | "it-IT" => "Italian",
+        "en" | "en-US" | "en-GB" => "English",
+        _ => anyhow::bail!("Unsupported report locale"),
+    };
+    for node in &mut w.nodes {
+        node.prompt = node.prompt.replace("{{app_report_language}}", language);
+    }
+    Ok(())
 }
 fn admin(u: &User) -> ApiResult<()> {
     if u.id != 1 {
@@ -327,7 +352,7 @@ pub async fn save(
             texts(&t.content.locales, true)?;
             ensure_publish(&t.content, c.sections.as_slice())?;
             let serialized =
-                serde_json::to_string(&t.content.workflow).map_err(anyhow::Error::from)?;
+                serde_json::to_string(&t.content).map_err(anyhow::Error::from)?;
             if crate::agents::redact(&serialized, &a.store.settings(u.id)?) != serialized {
                 return Err(bad("Il workflow contiene credenziali personali"));
             }
@@ -360,6 +385,18 @@ pub async fn save(
     )?;
     Ok(Json(c.clone()))
 }
+fn localized_workflow(t:&Content,language:&str)->Result<Workflow> {
+    let mut workflow=t.workflow.clone();
+    if let Some(text)=t.locales.get(language) {
+        for (id,translation) in &text.nodes {
+            let node=workflow.nodes.iter_mut().find(|n|n.id==*id).ok_or_else(||anyhow::anyhow!("Nodo inesistente: {id}"))?;
+            if let Some(value)=&translation.title {node.title=value.clone();}
+            if let Some(value)=&translation.prompt {node.prompt=value.clone();}
+            if let Some(value)=&translation.text {node.text=value.clone();}
+        }
+    }
+    Ok(workflow)
+}
 fn ensure_publish(t: &Content, sections: &[Section]) -> Result<()> {
     ensure!(
         sections.iter().any(|s| s.content.id == t.section
@@ -371,12 +408,11 @@ fn ensure_publish(t: &Content, sections: &[Section]) -> Result<()> {
         t.translation_status != "stale",
         "Rivedi e conferma le traduzioni prima di pubblicare"
     );
-    crate::engine::validate(&t.workflow)?;
-    ensure!(
-        portability(&t.workflow).is_empty(),
-        "{}",
-        portability(&t.workflow).join("; ")
-    );
+    for language in t.locales.keys() {
+        let workflow=localized_workflow(t,language)?;
+        crate::engine::validate(&workflow)?;
+        ensure!(portability(&workflow).is_empty(), "{}", portability(&workflow).join("; "));
+    }
     Ok(())
 }
 pub async fn history(State(a): State<App>, u: User) -> ApiResult<Json<Vec<u64>>> {
@@ -465,6 +501,8 @@ pub async fn assist(
             binding: BINDING,
             runtime,
             model_override: "",
+                provider_override: "",
+                base_url_override: "",
             prompt: &prompt,
         },
     )
@@ -517,10 +555,67 @@ fn detected(w: &Workflow) -> Vec<String> {
 mod tests {
     use super::*;
     #[test]
+    fn integration_report_language_is_resolved_per_run_without_changing_the_template() {
+        let catalog = seed();
+        for t in catalog.templates.iter().filter(|t| t.content.id.starts_with("github-") || t.content.id.starts_with("atlassian-")) {
+            for text_locale in ["it", "en"] {
+                let text = &t.content.locales[text_locale];
+                for node in &t.content.workflow.nodes {
+                    assert!(text.nodes.get(&node.id).and_then(|n| n.title.as_ref()).is_some(), "{} {} {}", t.content.id, text_locale, node.id);
+                }
+                let mut saved = t.content.workflow.clone();
+                let report = saved.nodes.iter_mut().find(|n| n.id == "report").unwrap();
+                report.prompt = t.content.locales[text_locale].nodes["report"].prompt.clone().unwrap();
+                assert!(report.prompt.contains("{{app_report_language}}"));
+                for (locale, expected) in [(Some("it"), "Italian"), (Some("en"), "English"), (None, "English")] {
+                    let mut snapshot = saved.clone();
+                    resolve_report_language(&mut snapshot, locale).unwrap();
+                    let resolved = &snapshot.node("report").unwrap().prompt;
+                    assert!(resolved.contains(expected));
+                    assert!(!resolved.contains("{{app_report_language}}"));
+                    assert!(saved.node("report").unwrap().prompt.contains("{{app_report_language}}"));
+                    for node in saved.nodes.iter().filter(|n| n.kind == "Connection") {
+                        assert_eq!(snapshot.node(&node.id).unwrap().command, node.command);
+                        assert_eq!(snapshot.node(&node.id).unwrap().operation, node.operation);
+                    }
+                }
+                assert!(resolve_report_language(&mut saved, Some("unsupported")).is_err());
+            }
+        }
+    }
+    #[test]
+    fn ci_setup_publishes_only_the_reviewed_demo_and_verifies_the_created_commit() {
+        use base64::Engine;
+        let c = seed();
+        let t = &c.templates.iter().find(|t| t.content.id == "github-ci-setup").unwrap().content;
+        let w = &t.workflow;
+        let publish = w.node("publish-ci").unwrap();
+        assert!(crate::connectors::is_write(publish));
+        assert!(!crate::connectors::is_write(w.node("repository").unwrap()));
+        assert_eq!(publish.api_method, "PUT");
+        assert_eq!(publish.api_path, "/repos/{owner}/{repo}/contents/.github/workflows/demo-ci.yml");
+        let body: Value = serde_json::from_str(&publish.api_body).unwrap();
+        assert!(body.get("sha").is_none());
+        assert!(body.get("branch").is_none());
+        let bytes = base64::engine::general_purpose::STANDARD.decode(body["content"].as_str().unwrap()).unwrap();
+        assert_eq!(bytes, include_bytes!("../examples/github-ci/demo-ci.yml"));
+        assert_eq!(w.node("source").unwrap().source_mode, "copy");
+        assert_eq!(w.node("wait").unwrap().mode, "human");
+        assert!(!w.execution.allow_external_writes);
+        assert_eq!(w.node("github").unwrap().operation, "read_ci");
+        for lang in ["it", "en"] {
+            let localized = localized_workflow(t, lang).unwrap();
+            assert_eq!(localized.node("publish-ci").unwrap().api_body, publish.api_body);
+            assert!(localized.node("prepare").unwrap().prompt.contains(body["content"].as_str().unwrap()));
+            assert!(localized.node("sync").unwrap().prompt.contains("body.commit.sha"));
+            assert!(localized.node("report").unwrap().prompt.contains("head_sha"));
+        }
+    }
+    #[test]
     fn seed_is_bilingual_valid_and_portable() {
         let c = seed();
         validate(&c).unwrap();
-        assert_eq!(c.templates.len(), 11);
+        assert_eq!(c.templates.len(), 23);
         for s in &c.sections {
             texts(&s.content.locales, false).unwrap();
         }
@@ -528,6 +623,46 @@ mod tests {
             texts(&t.content.locales, true).unwrap();
             ensure_publish(&t.content, &c.sections).unwrap();
         }
+    }
+    #[test]
+    fn servicenow_templates_publish_the_example_graphs_without_private_bindings() {
+        let catalog = seed();
+        for (id, file) in [
+            ("itsm-generic", include_str!("../examples/itsm/workflow-generic.json")),
+            ("itsm-northstar", include_str!("../examples/itsm/workflow-northstar.json")),
+            ("servicenow-requests-from-files", include_str!("../examples/servicenow/workflow-requests.json")),
+            ("servicenow-request-to-speckit", include_str!("../examples/servicenow/workflow-request-to-speckit.json")),
+            ("servicenow-oauth-check", include_str!("../examples/servicenow/workflow-oauth-check.json")),
+        ] {
+            let template = catalog.templates.iter().find(|t| t.content.id == id).unwrap();
+            let published = template.published.as_ref().unwrap();
+            let example: Workflow = serde_json::from_str(file).unwrap();
+            assert_eq!(serde_json::to_value(&published.workflow).unwrap(), serde_json::to_value(example).unwrap(), "{id}");
+            assert!(portability(&published.workflow).is_empty());
+            let source = published.workflow.nodes.iter().find(|n| n.kind == "Source").unwrap();
+            assert_eq!(source.source_type, "examples");
+            assert_eq!(source.source_mode, "copy");
+        }
+        let published = public(catalog);
+        let spec = published["templates"].as_array().unwrap().iter().find(|t| t["id"] == "servicenow-request-to-speckit").unwrap();
+        let workflow: Workflow = serde_json::from_value(spec["workflow"].clone()).unwrap();
+        assert!(workflow.nodes.iter().filter(|n| n.kind == "Connection").all(|n| n.operation == "read_request" && !crate::connectors::is_write(n)));
+        assert_eq!(workflow.node("specify").unwrap().command, "specify");
+        assert_eq!(workflow.node("review-spec").unwrap().mode, "human");
+    }
+    #[test]
+    fn oauth_template_translates_only_node_text_and_preserves_the_readonly_graph() {
+        let catalog=seed();let t=&catalog.templates.iter().find(|t|t.content.id=="servicenow-oauth-check").unwrap().content;
+        let italian=localized_workflow(t,"it").unwrap();let english=localized_workflow(t,"en").unwrap();
+        assert_eq!(italian.node("check-servicenow").unwrap().title,"Verifica OAuth e lettura incident");
+        assert_eq!(english.node("check-servicenow").unwrap().title,"Check OAuth and incident read access");
+        assert!(italian.node("report").unwrap().prompt.contains("in italiano"));
+        assert!(english.node("report").unwrap().prompt.contains("in English"));
+        assert_eq!(italian.entry,english.entry);
+        assert!(italian.nodes.iter().filter(|n|n.kind=="Connection").all(|n|n.operation=="check_connection"&&!crate::connectors::is_write(n)));
+        assert!(serde_json::from_value::<NodeText>(json!({"provider":"other"})).is_err());
+        let mut invalid=t.clone();invalid.locales.get_mut("it").unwrap().nodes.get_mut("report").unwrap().prompt=Some("api_key=do-not-publish".into());
+        assert!(ensure_publish(&invalid,&catalog.sections).is_err());
     }
     #[test]
     fn drafts_cannot_leak_and_archiving_hides_publications() {
@@ -541,7 +676,7 @@ mod tests {
             title
         );
         c.templates[0].content.status = "archived".into();
-        assert_eq!(public(c.clone())["templates"].as_array().unwrap().len(), 10);
+        assert_eq!(public(c.clone())["templates"].as_array().unwrap().len(), 22);
         c.sections[0].content.status = "archived".into();
         assert!(
             public(c)["templates"]
@@ -555,7 +690,7 @@ mod tests {
     fn corruption_is_preserved_and_initialization_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
         let c = load(dir.path()).unwrap();
-        assert_eq!(c.revision, 1);
+        assert_eq!(c.revision, seed().revision);
         let path = dir.path().join("system/workflow-templates.json");
         std::fs::write(&path, "broken catalog").unwrap();
         assert!(load(dir.path()).is_err());

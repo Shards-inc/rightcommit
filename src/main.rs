@@ -8,10 +8,21 @@ mod auth;
 mod users;
 mod compaction;
 mod connectors;
+mod github_api;
+mod servicenow;
+mod servicenow_oauth;
+mod itsm_batch;
+mod servicenow_config;
+mod servicenow_request;
+mod pi_check;
+mod pi_local;
+mod pi_providers;
+mod startup_env;
 mod continuation;
 mod deletion;
 mod distribution;
 mod engine;
+mod schedules;
 mod finops;
 mod claude_time;
 mod codex_cost;
@@ -74,20 +85,28 @@ fn sources_dir() -> anyhow::Result<PathBuf> {
     Ok(std::fs::canonicalize("sources")?)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         Some("--version" | "-V") => {
             println!("rightcommit {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Some("--help" | "-h") => {
-            println!("rightcommit [setup | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 24 o almeno 22.19, con npm).\nDati: ./data oppure NODO_DATA. Progetti: ./sources oppure NODO_SOURCES. Risorse esterne: NODO_ASSETS.");
+            println!("rightcommit [setup | --version | --help]\n\nAvvio: http://localhost:8080\nsetup: installa agenti ed estensioni (richiede Node.js 24 o almeno 22.19, con npm).\nDati: ./data oppure NODO_DATA. Progetti: ./sources oppure NODO_SOURCES. Risorse esterne: NODO_ASSETS.\nAmbiente: .env nella cartella di avvio; le variabili già impostate hanno precedenza.");
             return Ok(());
         }
         Some("setup" | "mcp-bridge" | "mcp-workspace") | None => {}
         Some(arg) => anyhow::bail!("Argomento sconosciuto: {arg}; usa --help"),
     }
+    if matches!(std::env::args().nth(1).as_deref(),None|Some("setup")) {
+        // SAFETY: no runtime or application threads exist yet. Utility MCP processes must
+        // not load a .env from an agent's working directory.
+        unsafe { startup_env::load()?; }
+    }
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(run())
+}
+
+async fn run() -> anyhow::Result<()> {
     if std::env::args().nth(1).as_deref() == Some("mcp-bridge") {
         return mcp_bridge::run().await;
     }
@@ -139,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = std::env::var("NODO_LISTEN").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, isolated=app.isolate, "rightcommit pronto");
+    schedules::start_service(app.clone())?;
     axum::serve(listener, api::router(app))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

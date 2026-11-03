@@ -20,6 +20,12 @@ use std::{collections::BTreeMap, convert::Infallible};
 
 pub fn router(app: App) -> Router {
     Router::new()
+        .route("/github-api.js", axum::routing::get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../web/github-api.js")) }))
+        .route("/schedules.js", axum::routing::get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../web/schedules.js")) }))
+        .route("/api/schedules", axum::routing::get(crate::schedules::list).post(crate::schedules::create))
+        .route("/api/schedules/preview", axum::routing::post(crate::schedules::preview))
+        .route("/api/schedules/{id}", axum::routing::put(crate::schedules::update).delete(crate::schedules::delete))
+        .route("/api/schedules/{id}/history", axum::routing::get(crate::schedules::history))
         .route(
             "/api/a2a/connections",
             axum::routing::get(crate::a2a::connections).post(crate::a2a::save_connection),
@@ -130,7 +136,7 @@ pub fn router(app: App) -> Router {
         )
         .route(
             "/api/settings",
-            axum::routing::get(settings).put(save_settings),
+            axum::routing::get(settings).put(save_settings).patch(patch_settings),
         )
         .route(
             "/api/rag",
@@ -224,8 +230,11 @@ pub fn router(app: App) -> Router {
         .route("/api/finops", axum::routing::get(crate::finops::get))
         .route(
             "/api/connections/atlassian/status",
-            axum::routing::get(twg_status),
+            axum::routing::get(twg_status).post(twg_check),
         )
+        .route("/api/connections/atlassian/login", axum::routing::post(twg_login).get(twg_login_status))
+        .route("/api/agents/pi/status", axum::routing::post(crate::pi_check::check))
+        .route("/api/connections/servicenow/status", axum::routing::get(crate::servicenow::status).post(crate::servicenow::check_draft))
         .route("/api/capabilities", axum::routing::get(capabilities))
         .route("/api/environment", axum::routing::get(environment))
         .route(
@@ -508,29 +517,30 @@ fn public_settings(a: &App, u: &User, s: &Settings) -> Value {
     crate::compaction::normalize(&mut effective);
     let s = &effective;
     let mut v = serde_json::to_value(s).unwrap();
+    v["_revision"] = json!(settings_revision(s));
+    v["pi_providers"]=crate::pi_providers::public_catalog();
+    v["pi_local_endpoint_available"]=json!(std::env::var("PI_LOCAL_BASE_URL").is_ok_and(|value|!value.trim().is_empty()));
     let home = a.data.join("users").join(u.id.to_string());
     for (rt, cfg) in &s.agents {
         v["agents"][rt]["api_key"] = json!("");
         v["agents"][rt]["api_key_preview"] = json!(api_key_preview(&cfg.api_key));
         let provider_env = agents::provider_environment_in_home(rt, cfg, &home);
         let cloud = agents::uses_cloud_provider(&provider_env);
-        v["agents"][rt]["configured"] = json!(
-            agents::has_provider_credentials(&provider_env)
-                || (!cloud
-                    && match rt.as_str() {
-                        "codex" =>
-                            home.join(".codex/auth.json").is_file()
-                                || (home.join(".codex/config.toml").is_file()
-                                    && home.join(".aws/credentials").is_file()),
-                        "claude" => home.join(".claude/.credentials.json").is_file(),
-                        "pi" => home.join(".pi/agent/auth.json").is_file(),
-                        _ => false,
-                    })
-        );
+        v["agents"][rt]["configured"] = json!(if rt=="pi" {
+            if cfg.multi_provider {crate::pi_providers::any_available(s,&home)}
+            else {crate::pi_providers::available(cfg,&home) && (cfg.provider!="local" || !cfg.model.trim().is_empty())}
+        } else {
+            agents::has_provider_credentials(&provider_env) || (!cloud && match rt.as_str() {
+                "codex"=>home.join(".codex/auth.json").is_file() || (home.join(".codex/config.toml").is_file()&&home.join(".aws/credentials").is_file()),
+                "claude"=>home.join(".claude/.credentials.json").is_file(), _=>false,
+            })
+        });
     }
     for (p, cfg) in &s.connections {
         v["connections"][p]["token"] = json!("");
-        v["connections"][p]["configured"] = json!(!cfg.token.is_empty());
+        v["connections"][p]["password"] = json!("");
+        v["connections"][p]["client_secret"] = json!("");
+        v["connections"][p]["configured"] = json!(if p == "servicenow" { crate::servicenow::configured(cfg) } else { !cfg.token.is_empty() });
     }
     v["mcp_servers"] = json!(
         s.mcp_servers
@@ -578,36 +588,59 @@ async fn openrouter_models(_u: User) -> ApiResult<Json<Value>> {
     }
     Ok(Json(json!({"models":models})))
 }
-async fn save_settings(
-    State(a): State<App>,
-    u: User,
-    Json(mut s): Json<Settings>,
-) -> ApiResult<Json<Value>> {
-    let old = a.store.settings(u.id)?;
+fn reject_cross_service_credentials(s: &Settings) -> anyhow::Result<()> {
+    if let Some(sn) = s.connections.get("servicenow") {
+        for secret in [&sn.password, &sn.client_secret, &sn.token].into_iter().filter(|v| !v.is_empty()) {
+            anyhow::ensure!(!s.agents.values().any(|agent| &agent.api_key == secret),
+                "Una credenziale ServiceNow è finita nei campi di un agente. Salvataggio bloccato: controlla l’autocompilazione del browser o del gestore password.");
+        }
+    }
+    Ok(())
+}
+fn backup_settings(a: &App, uid: i64, settings: &Settings) -> anyhow::Result<()> {
+    use std::io::Write;
+    let dir=a.data.join("system/settings-history").join(uid.to_string());
+    std::fs::create_dir_all(&dir)?;crate::store::private(&dir,true)?;
+    let path=dir.join(format!("{}-{}.enc",now(),id()));
+    let mut file=std::fs::OpenOptions::new().create_new(true).write(true).open(&path)?;
+    crate::store::private(&path,false)?;
+    file.write_all(&a.store.encrypt(&serde_json::to_vec(settings)?)?)?;file.sync_all()?;
+    Ok(())
+}
+const SETTINGS_CONFLICT: &str = "Le impostazioni sono cambiate. Riapri le impostazioni prima di salvare. Le modifiche inserite non sono state salvate.";
+fn settings_revision(settings: &Settings) -> String {
+    let mut s=settings.clone();crate::compaction::normalize(&mut s);
+    crate::store::hash(serde_json::to_vec(&s).unwrap())
+}
+fn validate_settings(s: &mut Settings, old: &Settings) -> anyhow::Result<()> {
     if !["codex", "claude", "pi"].contains(&s.default_runtime.as_str()) {
-        return Err(bad("Runtime non valido"));
+        return Err(anyhow::anyhow!("Runtime non valido"));
     }
     if !["preview", "full"].contains(&s.activity_log_verbosity.as_str()) {
-        return Err(bad("Verbosità registro attività non valida"));
+        return Err(anyhow::anyhow!("Verbosità registro attività non valida"));
     }
     if !(1..=100).contains(&s.activity_log_page_size) {
-        return Err(bad("Esecuzioni per pagina: inserisci un valore da 1 a 100"));
+        return Err(anyhow::anyhow!("Esecuzioni per pagina: inserisci un valore da 1 a 100"));
     }
     s.source_copy_limit_bytes()?;
     s.file_preview_limit_bytes()?;
-    crate::compaction::normalize(&mut s);
-    crate::compaction::validate(&s)?;
+    crate::compaction::normalize(s);
+    crate::compaction::validate(s)?;
     for (rt, cfg) in &mut s.agents {
         if !["codex", "claude", "pi"].contains(&rt.as_str())
             || cfg.model.len() > 200
             || cfg.api_key.len() > 4096
+            || cfg.base_url.len() > 2048
         {
-            return Err(bad("Configurazione agente non valida"));
+            return Err(anyhow::anyhow!("Configurazione agente non valida"));
         }
+        if rt=="pi" {anyhow::ensure!(crate::pi_providers::known(&cfg.provider),"Provider Pi non valido.");}
+        if !cfg.multi_provider || !cfg.base_url.trim().is_empty(){crate::pi_local::validate(cfg)?;}
         if cfg.api_key.is_empty() {
             cfg.api_key = old
                 .agents
                 .get(rt)
+                .filter(|previous| rt != "pi" || (!crate::pi_local::endpoint_changed(cfg, previous) && cfg.provider==previous.provider))
                 .map(|c| c.api_key.clone())
                 .unwrap_or_default()
         } else if cfg.api_key == "__CLEAR__" {
@@ -616,20 +649,28 @@ async fn save_settings(
     }
     for (p, c) in &mut s.connections {
         if !["github", "azure", "servicenow", "atlassian"].contains(&p.as_str()) {
-            return Err(bad("Connettore sconosciuto"));
+            return Err(anyhow::anyhow!("Connettore sconosciuto"));
+        }
+        if p == "servicenow" {
+            let previous = old.connections.get(p).cloned().unwrap_or_default();
+            crate::servicenow::merge(c, &previous);
+            crate::servicenow::validate_config(c)?;
         }
         if c.token.is_empty() {
             c.token = old
                 .connections
                 .get(p)
+                .filter(|old| p != "atlassian" || old.username == c.username)
                 .map(|c| c.token.clone())
                 .unwrap_or_default()
         } else if c.token == "__CLEAR__" {
             c.token.clear();
         }
+        if p == "atlassian" { crate::twg::validate_config(c)?; }
     }
+    reject_cross_service_credentials(s)?;
     if s.mcp_servers.len() > 30 {
-        return Err(bad("Massimo 30 server MCP personali"));
+        return Err(anyhow::anyhow!("Massimo 30 server MCP personali"));
     }
     for (id, c) in &mut s.mcp_servers {
         if id.is_empty()
@@ -638,39 +679,86 @@ async fn save_settings(
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         {
-            return Err(bad("ID server MCP non valido"));
+            return Err(anyhow::anyhow!("ID server MCP non valido"));
         }
         crate::mcp_client::merge(c, old.mcp_servers.get(id).unwrap_or(&McpConfig::default()));
         crate::mcp_client::validate(c)?;
     }
-    let old_fingerprints: BTreeMap<_, _> = old
-        .mcp_servers
-        .iter()
-        .map(|(id, c)| (id.clone(), crate::mcp_auth::fingerprint(c)))
-        .collect();
-    let s = a.store.update_settings(u.id, |latest| {
-        for (id, c) in &mut s.mcp_servers {
-            if let Some(current) = latest.mcp_servers.get(id) {
-                crate::mcp_client::merge(c, current);
-            }
-        }
-        *latest = s;
-        Ok(())
-    })?;
-    let mcp_changed = old_fingerprints
-        != s.mcp_servers
-            .iter()
-            .map(|(id, c)| (id.clone(), crate::mcp_auth::fingerprint(c)))
-            .collect::<BTreeMap<_, _>>();
-    if mcp_changed {
-        a.mcp.clear_user(u.id).await;
-    }
-    a.slots.changed.notify_waiters();
-    Ok(Json(public_settings(&a, &u, &s)))
+    Ok(())
 }
+fn merge_config_patch(target: &mut Value, patch: &Value, schema: &Value) -> anyhow::Result<()> {
+    let changes=patch.as_object().ok_or_else(||anyhow::anyhow!("Modifiche impostazioni non valide"))?;
+    for (key,value) in changes {
+        let template=schema.get(key).ok_or_else(||anyhow::anyhow!("Campo impostazioni non valido: {key}"))?;
+        if key == "auth" { merge_config_patch(&mut target[key],value,template)?; }
+        else { target[key]=value.clone(); }
+    }
+    Ok(())
+}
+fn merge_settings_patch(current: &Settings, changes: &Value) -> anyhow::Result<Settings> {
+    let mut result=serde_json::to_value(current)?;
+    let defaults=serde_json::to_value(Settings::default())?;
+    for (group,value) in changes.as_object().ok_or_else(||anyhow::anyhow!("Modifiche impostazioni non valide"))? {
+        anyhow::ensure!(defaults.get(group).is_some(),"Gruppo impostazioni non valido: {group}");
+        if ["agents","connections","compaction","mcp_servers"].contains(&group.as_str()) {
+            let map=value.as_object().ok_or_else(||anyhow::anyhow!("Gruppo impostazioni non valido"))?;
+            for (id,patch) in map {
+                if patch.is_null() {
+                    anyhow::ensure!(group=="mcp_servers","Rimozione impostazioni non consentita");
+                    result[group].as_object_mut().unwrap().remove(id);continue;
+                }
+                let schema=match group.as_str() {
+                    "agents"=>{anyhow::ensure!(["codex","claude","pi"].contains(&id.as_str()),"Runtime non valido");serde_json::to_value(AgentConfig::default())?},
+                    "connections"=>{anyhow::ensure!(["github","azure","servicenow","atlassian"].contains(&id.as_str()),"Connettore sconosciuto");serde_json::to_value(ConnectionConfig::default())?},
+                    "compaction"=>{anyhow::ensure!(["codex","claude","pi"].contains(&id.as_str()),"Runtime non valido");serde_json::to_value(CompactionConfig::for_runtime(id))?},
+                    _=>serde_json::to_value(McpConfig::default())?,
+                };
+                if result[group].get(id).is_none(){result[group][id]=schema.clone();}
+                merge_config_patch(&mut result[group][id],patch,&schema)?;
+            }
+        } else { result[group]=value.clone(); }
+    }
+    Ok(serde_json::from_value(result)?)
+}
+async fn patch_settings(State(a): State<App>,u: User,Json(payload): Json<Value>) -> ApiResult<Json<Value>> {
+    write_settings(a,u,payload,true).await
+}
+async fn save_settings(State(a): State<App>,u: User,Json(payload): Json<Value>) -> ApiResult<Json<Value>> {
+    write_settings(a,u,payload,false).await
+}
+async fn write_settings(a: App,u: User,payload: Value,partial: bool) -> ApiResult<Json<Value>> {
+    let revision=payload[if partial {"revision"}else{"_revision"}].as_str().ok_or_else(||auth::ApiError(StatusCode::CONFLICT,SETTINGS_CONFLICT.into()))?;
+    let mut mcp_changed=false;
+    let result=a.store.update_settings(u.id,|latest| {
+        anyhow::ensure!(revision==settings_revision(latest),"{SETTINGS_CONFLICT}");
+        let mut next=if partial {merge_settings_patch(latest,&payload["changes"])?}else{serde_json::from_value::<Settings>(payload.clone())?};
+        if partial && payload["changes"]["agents"]["pi"].get("api_key").is_none()
+            && let (Some(config),Some(previous))=(next.agents.get_mut("pi"),latest.agents.get("pi"))
+            && (crate::pi_local::endpoint_changed(config,previous) || config.provider!=previous.provider) {
+            config.api_key.clear();
+        }
+        if partial && payload["changes"]["connections"]["servicenow"]["client_secret"].as_str().is_none_or(|s|s.is_empty())
+            && let (Some(config),Some(previous))=(next.connections.get_mut("servicenow"),latest.connections.get("servicenow"))
+            && (config.client_id!=previous.client_id || config.base_url.trim_end_matches('/')!=previous.base_url.trim_end_matches('/')) {
+            config.client_secret.clear();
+        }
+        validate_settings(&mut next,latest)?;
+        mcp_changed=serde_json::to_value(&next.mcp_servers)?!=serde_json::to_value(&latest.mcp_servers)?;
+        if serde_json::to_value(&next)?!=serde_json::to_value(&*latest)? {backup_settings(&a,u.id,latest)?;}
+        *latest=next;Ok(())
+    });
+    let settings=result.map_err(|error|if error.to_string()==SETTINGS_CONFLICT {auth::ApiError(StatusCode::CONFLICT,SETTINGS_CONFLICT.into())}else{error.into()})?;
+    if mcp_changed {a.mcp.clear_user(u.id).await;}
+    a.slots.changed.notify_waiters();
+    Ok(Json(public_settings(&a,&u,&settings)))
+}
+
 async fn twg_status(State(a): State<App>, u: User) -> ApiResult<Json<Value>> {
     Ok(Json(crate::twg::status(&a, u.id).await))
 }
+async fn twg_check(State(a): State<App>, u: User, Json(config):Json<ConnectionConfig>)->ApiResult<Json<Value>>{Ok(Json(crate::twg::check(&a,u.id,config).await?))}
+async fn twg_login(State(a):State<App>,u:User)->ApiResult<Json<Value>>{Ok(Json(json!(crate::twg::begin_login(&a,u.id).await?)))}
+async fn twg_login_status(State(a):State<App>,u:User)->ApiResult<Json<Value>>{Ok(Json(json!(crate::twg::login_status(&a,u.id).await)))}
 async fn environment(State(a): State<App>, u: User) -> ApiResult<Json<Value>> {
     // Return only names with a nonblank value. Never expose values in responses or logs.
     let mut names: Vec<String> = std::env::vars_os()
@@ -751,17 +839,23 @@ async fn runs(
         Some(id) => a.store.workflow_runs(u.id, &id)?,
         None => a.store.runs(u.id)?,
     };
-    Ok(Json(json!(runs.iter().map(|r|json!({"id":r.id,"name":r.workflow.name,"workflow_id":r.workflow.id,"status":r.status,"current":r.current,"created":r.created,"updated":r.updated,"parent":r.parent,"execution":r.execution})).collect::<Vec<_>>())))
+    let summaries = runs.iter().map(|r| -> anyhow::Result<Value> {
+        let schedule_id = crate::schedules::run_schedule(&a, u.id, &r.id)?;
+        Ok(json!({"id":r.id,"name":r.workflow.name,"workflow_id":r.workflow.id,"status":r.status,"current":r.current,"created":r.created,"updated":r.updated,"parent":r.parent,"schedule_id":schedule_id,"execution":r.execution}))
+    }).collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(Json(json!(summaries)))
 }
 #[derive(Deserialize)]
-struct StartRun {
-    workflow_id: String,
+pub(crate) struct StartRun {
     #[serde(default)]
-    input: String,
-    base_run: Option<String>,
+    pub locale: Option<String>,
+    pub workflow_id: String,
     #[serde(default)]
-    allow_large_source_copy: bool,
-    execution: Option<ExecutionPolicy>,
+    pub input: String,
+    pub base_run: Option<String>,
+    #[serde(default)]
+    pub allow_large_source_copy: bool,
+    pub execution: Option<ExecutionPolicy>,
 }
 async fn create_run(
     State(a): State<App>,
@@ -770,12 +864,17 @@ async fn create_run(
 ) -> ApiResult<Json<Run>> {
     let lifecycle = a.lifecycle.clone();
     let _guard = lifecycle.write().await;
-    let mut w = a.store.workflow(u.id, &b.workflow_id)?;
+    Ok(Json(prepare_run(&a, u.id, b, None).await?))
+}
+pub(crate) async fn prepare_run(a: &App, uid: i64, b: StartRun, reserved_id: Option<String>) -> anyhow::Result<Run> {
+    crate::auth::ensure_active(a, uid)?;
+    let mut w = a.store.workflow(uid, &b.workflow_id)?;
     if let Some(policy) = b.execution {
         crate::supervision::validate(&policy)?;
         w.execution = policy;
     }
-    let copy_limit = a.store.settings(u.id)?.source_copy_limit_bytes()?;
+    crate::templates::resolve_report_language(&mut w, b.locale.as_deref())?;
+    let copy_limit = a.store.settings(uid)?.source_copy_limit_bytes()?;
     for (i, n) in w.nodes.iter().filter(|n| n.kind == "Source").enumerate() {
         if n.source_type == "folder"
             && !crate::source_access::direct(n)
@@ -784,17 +883,18 @@ async fn create_run(
             let path = crate::storage::source_folder(&a, "sources", &n.location)?;
             let bytes = crate::agents::source_copy_size(&path, copy_limit)?;
             if bytes > copy_limit && !b.allow_large_source_copy {
-                return Err(bad(format!(
+                anyhow::bail!(
                     "La cartella supera {} MiB: conferma la copia oppure scegli Modifica sorgente permanentemente",
                     copy_limit / (1024 * 1024)
-                )));
+                );
             }
         }
     }
-    let r = engine::create(&a, u.id, w, b.input, b.base_run).await?;
-    engine::launch(a, u.id, r.id.clone())?;
-    Ok(Json(r))
+    let r = engine::create_reserved(a, uid, w, b.input, b.base_run, reserved_id).await?;
+    engine::launch(a.clone(), uid, r.id.clone())?;
+    Ok(r)
 }
+
 async fn run(State(a): State<App>, u: User, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let r = a.store.run(u.id, &id)?;
     let artifact_app=&a;
@@ -1125,5 +1225,93 @@ mod artifact_download_tests {
         assert!(response.headers()[header::CONTENT_DISPOSITION].to_str().unwrap().contains("risultato%20%C3%A8.bin"));
         assert_eq!(&axum::body::to_bytes(response.into_body(),1024).await.unwrap()[..],bytes);
         assert!(artifact_download(State(app),User {id:2,email:String::new()},Path(artifact.id)).await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod settings_isolation_tests {
+    use super::*;
+    fn user()->User{User{id:1,email:"test@local".into()}}
+    #[tokio::test]
+    async fn atlassian_settings_are_private_preserved_and_cleared_independently() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let initial=public_settings(&app,&user(),&app.store.settings(1).unwrap());
+        let first=patch_settings(State(app.clone()),user(),Json(json!({"revision":initial["_revision"],"changes":{"connections":{"atlassian":{"base_url":"https://demo.atlassian.net","username":"user@example.test","token":"private-bitbucket-token","repository":"workspace/repo"}}}}))).await.unwrap().0;
+        assert_eq!(first["connections"]["atlassian"]["token"],"");assert_eq!(first["connections"]["atlassian"]["configured"],true);assert!(!first.to_string().contains("private-bitbucket-token"));
+        let next=patch_settings(State(app.clone()),user(),Json(json!({"revision":first["_revision"],"changes":{"connections":{"atlassian":{"token":"","repository":"workspace/other"}}}}))).await.unwrap().0;
+        assert_eq!(app.store.settings(1).unwrap().connections["atlassian"].token,"private-bitbucket-token");
+        assert!(!std::fs::read(dir.path().join("system/nodo.sqlite")).unwrap().windows(b"private-bitbucket-token".len()).any(|s|s==b"private-bitbucket-token"));
+        let other=public_settings(&app,&User{id:2,email:String::new()},&app.store.settings(2).unwrap());assert!(other["connections"].get("atlassian").is_none());
+        let changed=patch_settings(State(app.clone()),user(),Json(json!({"revision":next["_revision"],"changes":{"connections":{"atlassian":{"username":"other@example.test","token":""}}}}))).await.unwrap().0;
+        assert_eq!(changed["connections"]["atlassian"]["configured"],false);
+        let cleared=patch_settings(State(app.clone()),user(),Json(json!({"revision":changed["_revision"],"changes":{"connections":{"atlassian":{"token":"__CLEAR__"}}}}))).await.unwrap().0;assert_eq!(cleared["connections"]["atlassian"]["configured"],false);
+    }
+    #[tokio::test]
+    async fn partial_settings_preserve_other_services_and_reject_stale_writes() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let original=public_settings(&app,&user(),&app.store.settings(1).unwrap());
+        let first=patch_settings(State(app.clone()),user(),Json(json!({"revision":original["_revision"],"changes":{"connections":{"servicenow":{"base_url":"https://dev12345.service-now.com","authentication":"basic","username":"api.user","password":"test-pdi-secret"}}}}))).await.unwrap().0;
+        let next=patch_settings(State(app.clone()),user(),Json(json!({"revision":first["_revision"],"changes":{"agents":{"pi":{"model":"chosen-model","api_key":"test-pi-key"}}}}))).await.unwrap().0;
+        let saved=app.store.settings(1).unwrap();assert_eq!(saved.connections["servicenow"].password,"test-pdi-secret");assert_eq!(saved.agents["pi"].model,"chosen-model");assert_eq!(saved.agents["pi"].api_key,"test-pi-key");
+        assert!(!next.to_string().contains("test-pdi-secret"));assert!(!next.to_string().contains("test-pi-key"));
+        assert_eq!(save_settings(State(app.clone()),user(),Json(original.clone())).await.unwrap_err().0,StatusCode::CONFLICT);
+        assert_eq!(patch_settings(State(app.clone()),user(),Json(json!({"revision":first["_revision"],"changes":{"agents":{"pi":{"model":"stale"}}}}))).await.unwrap_err().0,StatusCode::CONFLICT);
+        assert_eq!(save_settings(State(app.clone()),user(),Json(json!({"agents":{}}))).await.unwrap_err().0,StatusCode::CONFLICT);
+        assert_eq!(app.store.settings(1).unwrap().agents["pi"].model,"chosen-model");
+        assert!(patch_settings(State(app.clone()),user(),Json(json!({"revision":next["_revision"],"changes":{"agents":{"pi":{"model":"should-not-save"}},"connections":{"servicenow":{"base_url":"http://invalid.example"}}}}))).await.is_err());
+        assert_eq!(app.store.settings(1).unwrap().agents["pi"].model,"chosen-model");
+        let clear=patch_settings(State(app.clone()),user(),Json(json!({"revision":next["_revision"],"changes":{"agents":{"pi":{"api_key":"__CLEAR__"}}}}))).await.unwrap().0;
+        assert!(app.store.settings(1).unwrap().agents["pi"].api_key.is_empty());assert_eq!(app.store.settings(1).unwrap().connections["servicenow"].password,"test-pdi-secret");
+        assert!(patch_settings(State(app.clone()),user(),Json(json!({"revision":clear["_revision"],"changes":{"unknown":"bad"}}))).await.is_err());
+    }
+    #[tokio::test]
+    async fn concurrent_saves_are_atomic_and_mcp_changes_are_scoped() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());let revision=settings_revision(&app.store.settings(1).unwrap());
+        let a=json!({"revision":revision,"changes":{"agents":{"pi":{"model":"first"}}}});
+        let b=json!({"revision":revision,"changes":{"agents":{"pi":{"model":"second"}}}});
+        let (left,right)=tokio::join!(patch_settings(State(app.clone()),user(),Json(a)),patch_settings(State(app.clone()),user(),Json(b)));
+        assert_ne!(left.is_ok(),right.is_ok());let error=if let Err(e)=left{e}else{right.unwrap_err()};assert_eq!(error.0,StatusCode::CONFLICT);
+        let revision=settings_revision(&app.store.settings(1).unwrap());
+        let added=patch_settings(State(app.clone()),user(),Json(json!({"revision":revision,"changes":{"mcp_servers":{"demo":{"name":"Demo","transport":"stdio","command":"echo","args":[],"env":{"TOKEN":"dummy"},"auth":{"mode":"none"}}}}}))).await.unwrap().0;
+        assert_eq!(app.store.settings(1).unwrap().mcp_servers["demo"].env["TOKEN"],"dummy");
+        let _ = patch_settings(State(app.clone()),user(),Json(json!({"revision":added["_revision"],"changes":{"mcp_servers":{"demo":null}}}))).await.unwrap();
+        let saved=app.store.settings(1).unwrap();assert!(saved.mcp_servers.is_empty());assert!(["first","second"].contains(&saved.agents["pi"].model.as_str()));
+    }
+    #[tokio::test]
+    async fn local_endpoint_changes_do_not_reuse_existing_provider_secrets() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let revision=settings_revision(&app.store.settings(1).unwrap());
+        let first=patch_settings(State(app.clone()),user(),Json(json!({"revision":revision,"changes":{"agents":{"pi":{"provider":"local","base_url":"http://127.0.0.1:1234/v1","model":"local-model","api_key":"first-endpoint-key"}}}}))).await.unwrap().0;
+        assert_eq!(first["agents"]["pi"]["configured"],true);
+        let second=patch_settings(State(app.clone()),user(),Json(json!({"revision":first["_revision"],"changes":{"agents":{"pi":{"base_url":"http://127.0.0.1:11434/v1"}}}}))).await.unwrap().0;
+        assert!(app.store.settings(1).unwrap().agents["pi"].api_key.is_empty());assert_eq!(second["agents"]["pi"]["configured"],true);
+        let keyed=patch_settings(State(app.clone()),user(),Json(json!({"revision":second["_revision"],"changes":{"agents":{"pi":{"api_key":"second-endpoint-key"}}}}))).await.unwrap().0;
+        let _=patch_settings(State(app.clone()),user(),Json(json!({"revision":keyed["_revision"],"changes":{"agents":{"pi":{"provider":"openai"}}}}))).await.unwrap();
+        assert!(app.store.settings(1).unwrap().agents["pi"].api_key.is_empty());
+        let before=serde_json::to_value(app.store.settings(1).unwrap()).unwrap();let revision=settings_revision(&app.store.settings(1).unwrap());
+        assert!(patch_settings(State(app.clone()),user(),Json(json!({"revision":revision,"changes":{"agents":{"pi":{"provider":"local","base_url":"file:///tmp/server"}}}}))).await.is_err());
+        assert_eq!(serde_json::to_value(app.store.settings(1).unwrap()).unwrap(),before);
+    }
+
+}
+
+#[cfg(test)]
+mod servicenow_oauth_settings_tests {
+    use super::*;
+    fn user()->User{User{id:1,email:"oauth-settings@test.local".into()}}
+    #[tokio::test]
+    async fn oauth_settings_are_masked_encrypted_preserved_and_cleared(){
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let initial=public_settings(&app,&user(),&app.store.settings(1).unwrap());
+        let first=patch_settings(State(app.clone()),user(),Json(json!({"revision":initial["_revision"],"changes":{"connections":{"servicenow":{"base_url":"https://dev12345.service-now.com","authentication":"client_credentials","client_id":"client-test","client_secret":"private-client-secret-123","oauth_scope":"useraccount"}}}}))).await.unwrap().0;
+        assert_eq!(first["connections"]["servicenow"]["client_secret"],"");assert_eq!(first["connections"]["servicenow"]["configured"],true);assert!(!first.to_string().contains("private-client-secret-123"));
+        assert_eq!(app.store.settings(1).unwrap().connections["servicenow"].client_secret,"private-client-secret-123");
+        let second=patch_settings(State(app.clone()),user(),Json(json!({"revision":first["_revision"],"changes":{"connections":{"servicenow":{"client_secret":"","oauth_scope":""}}}}))).await.unwrap().0;
+        assert_eq!(second["connections"]["servicenow"]["configured"],true);
+        let rejected=patch_settings(State(app.clone()),user(),Json(json!({"revision":second["_revision"],"changes":{"agents":{"pi":{"api_key":"private-client-secret-123"}}}}))).await;assert!(rejected.is_err());
+        let third=patch_settings(State(app.clone()),user(),Json(json!({"revision":second["_revision"],"changes":{"connections":{"servicenow":{"client_id":"new-client"}}}}))).await.unwrap().0;assert_eq!(third["connections"]["servicenow"]["configured"],false);
+        let fourth=patch_settings(State(app.clone()),user(),Json(json!({"revision":third["_revision"],"changes":{"connections":{"servicenow":{"client_secret":"replacement-secret"}}}}))).await.unwrap().0;assert_eq!(fourth["connections"]["servicenow"]["configured"],true);
+        let cleared=patch_settings(State(app.clone()),user(),Json(json!({"revision":fourth["_revision"],"changes":{"connections":{"servicenow":{"client_secret":"__CLEAR__"}}}}))).await.unwrap().0;assert_eq!(cleared["connections"]["servicenow"]["configured"],false);
+        let bytes=std::fs::read(dir.path().join("system/nodo.sqlite")).unwrap();assert!(!bytes.windows("private-client-secret-123".len()).any(|w|w==b"private-client-secret-123"));
     }
 }

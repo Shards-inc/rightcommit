@@ -750,7 +750,8 @@ mod tests {
         r.sessions.insert(
             "agent".into(),
             NativeSession {
-                runtime: "codex".into(),
+                provider: String::new(), base_url: String::new(),
+runtime: "codex".into(),
                 native_id: "old-session".into(),
                 turns: 4,
                 model: "".into(),

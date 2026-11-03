@@ -314,7 +314,8 @@ async fn restart_preserves_native_sessions_and_interrupts_uncertain_work() {
     r.sessions.insert(
         "author".into(),
         NativeSession {
-            runtime: "codex".into(),
+            provider: String::new(), base_url: String::new(),
+runtime: "codex".into(),
             native_id: "stable-native-id".into(),
             turns: 3,
             model: "explicit-model".into(),
@@ -397,7 +398,8 @@ async fn rejected_review_passes_findings_to_the_same_author_session() {
     r.sessions.insert(
         "author".into(),
         NativeSession {
-            runtime: "codex".into(),
+            provider: String::new(), base_url: String::new(),
+runtime: "codex".into(),
             native_id: "same-native-session".into(),
             turns: 4,
             model: "explicit-model".into(),
@@ -447,7 +449,8 @@ async fn gate_answer_resumes_the_gate_without_replaying_the_author() {
     r.sessions.insert(
         "author".into(),
         NativeSession {
-            runtime: "codex".into(),
+            provider: String::new(), base_url: String::new(),
+runtime: "codex".into(),
             native_id: "author-kept".into(),
             turns: 7,
             model: "model".into(),
@@ -456,7 +459,8 @@ async fn gate_answer_resumes_the_gate_without_replaying_the_author() {
     r.sessions.insert(
         "gate:converged".into(),
         NativeSession {
-            runtime: "codex".into(),
+            provider: String::new(), base_url: String::new(),
+runtime: "codex".into(),
             native_id: "gate-kept".into(),
             turns: 1,
             model: "model".into(),
@@ -556,7 +560,8 @@ fn pi_openrouter_passes_provider_with_or_without_model_and_uses_own_key() {
     let packages = pi_extensions_fixture();
     for model in ["anthropic/claude-sonnet-4", ""] {
         let session = NativeSession {
-            runtime: "pi".into(),
+            provider: String::new(), base_url: String::new(),
+runtime: "pi".into(),
             native_id: "openrouter-session".into(),
             model: model.into(),
             turns: 0,
@@ -586,16 +591,18 @@ fn pi_openrouter_passes_provider_with_or_without_model_and_uses_own_key() {
         }
     }
     assert_eq!(
-        agents::api_key_env("pi", "openrouter"),
+        crate::pi_providers::key_env("openrouter").unwrap(),
         "OPENROUTER_API_KEY"
     );
-    assert_eq!(agents::api_key_env("pi", "openai"), "OPENAI_API_KEY");
-    assert_eq!(agents::api_key_env("pi", "anthropic"), "ANTHROPIC_API_KEY");
+    assert_eq!(crate::pi_providers::key_env("openai").unwrap(), "OPENAI_API_KEY");
+    assert_eq!(crate::pi_providers::key_env("anthropic").unwrap(), "ANTHROPIC_API_KEY");
 }
 
 #[test]
 fn pi_resume_restores_write_shell_tools_and_keeps_session_model() {
     let cfg = AgentConfig {
+        multi_provider: false,
+        base_url: String::new(),
         api_key: "must-not-appear-in-argv".into(),
         provider: "anthropic".into(),
         effort: "high".into(),
@@ -603,7 +610,8 @@ fn pi_resume_restores_write_shell_tools_and_keeps_session_model() {
         codemode: false,
     };
     let session = NativeSession {
-        runtime: "pi".into(),
+        provider: String::new(), base_url: String::new(),
+runtime: "pi".into(),
         native_id: "retained-session".into(),
         model: "opus".into(),
         turns: 12,
@@ -1009,6 +1017,8 @@ fn host_provider_environment_routes_credentials_and_preserves_personal_precedenc
         ("CODEX_API_KEY", "host-codex"),
         ("ANTHROPIC_API_KEY", "host-anthropic"),
         ("OPENROUTER_API_KEY", "host-openrouter"),
+        ("XAI_API_KEY", "host-xai"),
+        ("DEEPSEEK_API_KEY", "host-deepseek"),
         ("UNRELATED_SECRET", "never-inherit"),
         ("HOME", "/host-home"),
     ]
@@ -1021,6 +1031,8 @@ fn host_provider_environment_routes_credentials_and_preserves_personal_precedenc
         ("pi", "anthropic", "ANTHROPIC_API_KEY", "host-anthropic"),
         ("pi", "openai", "OPENAI_API_KEY", "host-openai"),
         ("pi", "openrouter", "OPENROUTER_API_KEY", "host-openrouter"),
+        ("pi", "xai", "XAI_API_KEY", "host-xai"),
+        ("pi", "deepseek", "DEEPSEEK_API_KEY", "host-deepseek"),
     ] {
         let mut cfg = AgentConfig {
             provider: provider.into(),
@@ -1345,4 +1357,58 @@ fn markdown_tables_preserve_content_without_executable_html() {
     assert_eq!(html.matches("<table>").count(),1);
     assert!(html.contains("<table><thead>"));assert!(html.contains("CheckIbanDomiEstera"));assert!(html.contains("&lt;table&gt;code sample&lt;/table&gt;"));
     assert!(!html.contains("<script"));assert!(!html.contains("onerror"));
+}
+
+#[test]
+fn pi_xai_and_deepseek_select_native_provider() {
+    for (provider,key) in [("xai","XAI_API_KEY"),("deepseek","DEEPSEEK_API_KEY")] {
+        let cfg = AgentConfig {provider:provider.into(),model:"selected-model".into(),..Default::default()};
+        let session = NativeSession {provider: String::new(), base_url: String::new(),
+runtime:"pi".into(),native_id:"provider-test".into(),model:cfg.model.clone(),turns:0};
+        let args=agents::pi_arguments(&session,&cfg,std::path::Path::new("/tmp/session"),std::path::Path::new("/app/pi-extensions"));
+        let index=args.iter().position(|arg|arg=="--provider").unwrap();assert_eq!(args[index+1],provider);
+        assert_eq!(crate::pi_providers::key_env(provider).unwrap(),key);
+    }
+}
+
+#[test]
+fn manager_public_failures_never_expose_provider_payloads() {
+    let cases = [
+        (r#"{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: Incorrect API key provided: fake-partial****************, url: https://provider.invalid/responses, request id: secret-request"}}"#, "credenziali"),
+        ("403 Forbidden", "permessi"),
+        ("429 Too Many Requests", "limitando"),
+        ("429 insufficient_quota", "quota"),
+        ("404 model_not_found", "modello"),
+        ("request timed out", "tempo"),
+        ("fetch failed: connection refused", "raggiungere"),
+        ("503 overloaded", "temporaneamente"),
+        ("arbitrary failure fake-partial", "configurazione"),
+    ];
+    for (raw, expected) in cases {
+        let message = agents::public_agent_failure(raw);
+        assert!(message.contains(expected), "{message}");
+        for sensitive in ["fake-partial", "secret-request", "https://", "turn.failed"] {
+            assert!(!message.contains(sensitive));
+        }
+    }
+}
+
+#[test]
+fn manager_write_permissions_default_on_persist_and_are_personal() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let legacy: Settings = serde_json::from_str("{}").unwrap();
+    assert!(legacy.manager_write_enabled);
+    let mut settings = app.store.settings(1).unwrap();
+    assert!(settings.manager_write_enabled);
+    let explicitly_disabled: Settings = serde_json::from_str(r#"{"manager_write_enabled":false}"#).unwrap();
+    assert!(!explicitly_disabled.manager_write_enabled);
+    settings.manager_write_enabled = true;
+    app.store.save_settings(1, &settings).unwrap();
+    let reopened = Store::open(dir.path()).unwrap();
+    assert!(reopened.settings(1).unwrap().manager_write_enabled);
+    assert!(reopened.settings(2).unwrap().manager_write_enabled);
+    settings.manager_write_enabled = false;
+    app.store.save_settings(1, &settings).unwrap();
+    assert!(!app.store.settings(1).unwrap().manager_write_enabled);
 }

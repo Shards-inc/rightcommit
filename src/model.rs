@@ -49,6 +49,8 @@ pub struct Node {
     pub agent: String,
     pub runtime: String,
     pub model: String,
+    pub pi_provider: String,
+    pub pi_base_url: String,
     pub mode: String,
     pub location: String,
     pub source_type: String,
@@ -62,7 +64,18 @@ pub struct Node {
     pub mcp_id: String,
     pub mcp_tools: Vec<String>,
     pub provider: String,
+    pub organization: String,
+    pub project: String,
+    pub repository: String,
     pub operation: String,
+    pub api_endpoint: String,
+    pub api_method: String,
+    pub api_path: String,
+    pub api_parameters: String,
+    pub api_query: String,
+    pub api_headers: String,
+    pub api_body: String,
+    pub api_encoding: String,
     pub outcomes: Vec<String>,
     pub require_tests: bool,
     pub require_tasks_closed: bool,
@@ -146,6 +159,8 @@ impl Workflow {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentConfig {
+    pub multi_provider: bool,
+    pub base_url: String,
     pub model: String,
     pub effort: String,
     pub api_key: String,
@@ -156,6 +171,8 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
+            multi_provider: false,
+            base_url: String::new(),
             model: String::new(),
             effort: "low".into(),
             api_key: String::new(),
@@ -200,6 +217,7 @@ impl CompactionConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub manager_write_enabled: bool,
     pub default_runtime: String,
     pub agents: BTreeMap<String, AgentConfig>,
     pub connections: BTreeMap<String, ConnectionConfig>,
@@ -215,6 +233,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            manager_write_enabled: true,
             default_runtime: default_runtime(),
             agents: ["codex", "claude", "pi"]
                 .into_iter()
@@ -253,6 +272,14 @@ impl Settings {
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct ConnectionConfig {
+    pub authentication: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub oauth_scope: String,
+    pub username: String,
+    pub password: String,
+    pub catalog_item: String,
+    pub catalog_variables: String,
     pub base_url: String,
     pub token: String,
     pub project: String,
@@ -260,6 +287,10 @@ pub struct ConnectionConfig {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct NativeSession {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub base_url: String,
     pub runtime: String,
     pub native_id: String,
     pub turns: u32,

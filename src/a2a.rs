@@ -19,6 +19,8 @@ static SEND_LOCK: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::syn
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Connection {
+    #[serde(default, rename="_revision", skip_serializing)]
+    pub revision: Option<String>,
     pub id: String,
     pub name: String,
     pub url: String,
@@ -121,7 +123,7 @@ pub async fn connections(State(a): State<App>, u: User) -> ApiResult<Json<Value>
         for id in ids {
             let c: Connection = load(&a, u.id, "connection", &id)?;
             result
-                .push(json!({"id":c.id,"name":c.name,"url":c.url,"has_token":!c.token.is_empty()}));
+                .push(json!({"id":c.id,"name":c.name,"url":c.url,"has_token":!c.token.is_empty(),"_revision":crate::store::hash(serde_json::to_vec(&c)?)}));
         }
         Ok(Json(json!(result)))
     }
@@ -133,25 +135,27 @@ pub async fn save_connection(
     u: User,
     Json(mut c): Json<Connection>,
 ) -> ApiResult<Json<Value>> {
-    let result: Result<Json<Value>> = async {
-        url(&c.url)?;
-        ensure!(
-            c.name.len() <= 160 && c.token.len() <= 8192,
-            "Configurazione troppo grande"
-        );
-        if c.id.is_empty() {
-            c.id = id()
-        };
-        ensure!(c.id.len() <= 80, "ID non valido");
-        if c.token.is_empty() {
-            c.token = load::<Connection>(&a, u.id, "connection", &c.id)?.token;
-        }
-        save(&a, u.id, "connection", &c.id, &c)?;
-        Ok(Json(json!({"id":c.id})))
+    url(&c.url)?;
+    if c.name.len()>160 || c.token.len()>8192{return Err(crate::auth::bad("Configurazione troppo grande"));}
+    if c.id.is_empty(){c.id=id();}
+    if c.id.is_empty() || c.id.len()>80{return Err(crate::auth::bad("ID non valido"));}
+    let mut db=a.store.db.lock().unwrap();
+    let transaction=db.transaction().map_err(anyhow::Error::from)?;
+    let old:Option<Vec<u8>>=transaction.query_row("SELECT blob FROM a2a_configs WHERE user_id=? AND kind='connection' AND id=?",params![u.id,c.id],|row|row.get(0)).optional().map_err(anyhow::Error::from)?;
+    let previous:Connection=old.as_ref().map(|blob|->Result<Connection>{Ok(serde_json::from_slice(&a.store.decrypt(blob)?)?)}).transpose()?.unwrap_or_default();
+    let revision=if old.is_some(){crate::store::hash(serde_json::to_vec(&previous).map_err(anyhow::Error::from)?)}else{"new".into()};
+    if c.revision.as_deref()!=Some(&revision){return Err(ApiError(StatusCode::CONFLICT,"La connessione è cambiata. Riaprila prima di salvare. Le modifiche inserite non sono state salvate.".into()));}
+    if c.token.is_empty(){c.token=previous.token;}else if c.token=="__CLEAR__"{c.token.clear();}
+    if let Some(blob)=old {
+        let dir=a.data.join("system/a2a-history").join(u.id.to_string());std::fs::create_dir_all(&dir).map_err(anyhow::Error::from)?;crate::store::private(&dir,true)?;
+        let path=dir.join(format!("{}-{}.enc",now(),id()));std::fs::write(&path,blob).map_err(anyhow::Error::from)?;crate::store::private(&path,false)?;
     }
-    .await;
-    Ok(result?)
+    let blob=a.store.encrypt(&serde_json::to_vec(&c).map_err(anyhow::Error::from)?)?;
+    transaction.execute("INSERT INTO a2a_configs(user_id,kind,id,blob) VALUES(?,'connection',?,?) ON CONFLICT(user_id,kind,id) DO UPDATE SET blob=excluded.blob",params![u.id,c.id,blob]).map_err(anyhow::Error::from)?;
+    transaction.commit().map_err(anyhow::Error::from)?;
+    Ok(Json(json!({"id":c.id})))
 }
+
 async fn discover(c: &Connection) -> Result<Value> {
     url(&c.url)?;
     let card = bounded(http()?.get(&c.url).bearer_auth(&c.token).send().await?).await?;
@@ -740,6 +744,7 @@ mod tests {
             name: "Remote".into(),
             url: format!("{base}/a2a/1/{}/.well-known/agent-card.json", w.id),
             token: token.into(),
+            revision: None,
         };
         save(&a, 1, "connection", "remote", &c).unwrap();
         let mut local = engine::create(&a, 1, w.clone(), "Input".into(), None)
@@ -890,5 +895,24 @@ mod tests {
         );
         assert!(url("https://user:secret@example.com/card").is_err());
         assert!(url("file:///secret").is_err());
+    }
+}
+
+#[cfg(test)]
+mod connection_revision_tests {
+    use super::*;
+    fn user()->User{User{id:1,email:"test@local".into()}}
+    #[tokio::test]
+    async fn connection_updates_require_current_revision_and_preserve_tokens() {
+        let dir=tempfile::tempdir().unwrap();let app=crate::tests::app(dir.path());
+        let first=Connection{id:"version-test".into(),name:"Initial".into(),url:"https://example.com/card".into(),token:"dummy-token".into(),revision:Some("new".into())};
+        let _ = save_connection(State(app.clone()),user(),Json(first.clone())).await.unwrap();
+        let list=connections(State(app.clone()),user()).await.unwrap().0;
+        let revision=list.as_array().unwrap()[0]["_revision"].as_str().unwrap().to_owned();
+        let mut edit=first.clone();edit.revision=Some(revision);edit.name="Updated".into();edit.token.clear();
+        let _ = save_connection(State(app.clone()),user(),Json(edit.clone())).await.unwrap();
+        assert_eq!(load::<Connection>(&app,1,"connection",&edit.id).unwrap().token,"dummy-token");
+        assert_eq!(save_connection(State(app.clone()),user(),Json(edit)).await.unwrap_err().0,StatusCode::CONFLICT);
+        assert_eq!(load::<Connection>(&app,1,"connection","version-test").unwrap().name,"Updated");
     }
 }

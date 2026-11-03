@@ -6,6 +6,8 @@
 !web/
 !distribution/
 !examples/
+!guides/
+!guides/**
 !pi-extensions/package.json
 !pi-extensions/package-lock.json
 !pi-extensions/.npmrc

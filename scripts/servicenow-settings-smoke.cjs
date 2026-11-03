@@ -1,0 +1,78 @@
+// Isolated app settings smoke; no external ServiceNow calls or real credentials.
+const assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{spawn}=require('node:child_process');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+(async()=>{
+ const data=fs.mkdtempSync(path.join(os.tmpdir(),'sn-settings-')),base='http://127.0.0.1:18249';
+ const server=spawn(path.resolve('target/debug/rightcommit'),[],{cwd:data,env:{...process.env,NODO_DATA:data,NODO_LISTEN:'127.0.0.1:18249',NODO_ASSETS:process.cwd()},stdio:'ignore'});let browser;
+ try{
+  for(let i=0;i<100;i++){try{if((await fetch(base+'/healthz')).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
+  browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1400,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const api=async(p,method='GET',body)=>{const r=await page.request.fetch(base+'/api'+p,{method,headers:{'X-Nodo-Request':'1'},data:body});assert(r.ok(),await r.text());return r.json()};
+  await api('/auth/register','POST',{email:'sn-settings@test.local',password:'temporary-settings-test'});
+  const piAuth=path.join(data,'users/1/.pi/agent/auth.json');fs.mkdirSync(path.dirname(piAuth),{recursive:true});fs.writeFileSync(piAuth,'{}');assert.equal((await api('/settings')).agents.pi.configured,false,'an empty Pi auth file must not count as configured');
+  await page.route('**/app.js',r=>r.fulfill({path:path.resolve('web/app.js')}));
+  await page.route('**/i18n.js',r=>r.fulfill({path:path.resolve('web/i18n.js')}));
+  await page.goto(base);await page.locator('#app').waitFor({state:'visible'});
+  await page.evaluate(()=>settingsDialog('connections'));
+  const language=async lang=>{await page.evaluate(lang=>{const e=document.querySelector('[data-language]');e.value=lang;e.dispatchEvent(new Event('change',{bubbles:true}))},lang);await page.waitForFunction(lang=>document.documentElement.lang===lang,lang)};
+  await language('en');
+  const card=page.locator('[data-service=servicenow]');
+  for(const label of ['ServiceNow instance URL','Instance username','Instance password','Test connection'])assert((await card.innerText()).includes(label),label);
+  await language('it');assert((await card.innerText()).includes('Password dell’istanza'));await language('en');
+  await page.locator('[name=base_servicenow]').fill('https://dev12345.service-now.com');
+  await page.locator('[name=sn_auth]').evaluate(e=>{e.value='basic';e.dispatchEvent(new Event('change',{bubbles:true}))});
+  await page.locator('[name=sn_username]').fill('admin');await page.locator('[name=sn_password]').fill('dummy-secret-password');
+  assert.equal(await page.locator('[name=sn_catalog_item],[name=sn_catalog_variables]').count(),0,'Catalog details belong in Source files');
+  let draftRequest;
+  await page.route('**/api/connections/servicenow/status',r=>{draftRequest=r.request().postDataJSON();assert.equal(r.request().method(),'POST');return r.fulfill({json:{connected:true,message:'Connessione e lettura incident verificate. Permessi di scrittura da verificare durante il workflow.'}})});
+  await page.locator('[data-action=servicenow-check]').click();await page.waitForFunction(()=>document.querySelector('[data-servicenow-status]')?.textContent.includes('Connection and incident read access verified.'));
+  assert.equal(draftRequest.username,'admin');assert.equal(draftRequest.password,'dummy-secret-password');assert.equal(draftRequest.base_url,'https://dev12345.service-now.com');
+  assert(!(await api('/settings')).connections.servicenow?.configured,'checking a draft must not save credentials');
+  assert.equal(await page.locator('[name=sn_password]').inputValue(),'dummy-secret-password');
+  await page.unroute('**/api/connections/servicenow/status');
+  await page.locator('[data-action=save-settings]').click();
+  await page.waitForFunction(()=>app.settings.connections.servicenow?.configured===true);
+  let settings=await api('/settings');assert.equal(settings.connections.servicenow.authentication,'basic');assert.equal(settings.connections.servicenow.username,'admin');assert.equal(settings.connections.servicenow.password,'');assert.equal(settings.connections.servicenow.token,'');assert(!JSON.stringify(settings).includes('dummy-secret-password'));
+  await page.waitForFunction(()=>document.querySelector('[name=sn_password]')?.value==='');
+  await page.evaluate(()=>{window.snSettingsSaved=false;window.addEventListener('settings-saved',()=>{window.snSettingsSaved=true},{once:true})});
+  await page.locator('[data-action=save-settings]').click();await page.waitForFunction(()=>window.snSettingsSaved);
+  // The button sends current draft fields; empty passwords can reuse saved credentials on the server.
+  await page.locator('[name=sn_username]').fill('unsaved-user');
+  await page.locator('[name=sn_password]').fill('unsaved-password');
+  await page.route('**/api/connections/servicenow/status',r=>{draftRequest=r.request().postDataJSON();return r.fulfill({json:{connected:true,message:'Connessione e lettura incident verificate. Permessi di scrittura da verificare durante il workflow.'}})});
+  await page.locator('[data-action=servicenow-check]').click();await page.waitForFunction(()=>document.querySelector('[data-servicenow-status]')?.textContent.includes('Connection and incident read access verified.'));
+  assert.equal(draftRequest.username,'unsaved-user');assert.equal(draftRequest.password,'unsaved-password');
+  assert.equal((await api('/settings')).connections.servicenow.username,'admin');
+  await page.locator('[name=sn_username]').fill('admin');await page.locator('[name=sn_password]').fill('');
+  await page.unroute('**/api/connections/servicenow/status');
+  await page.route('**/api/connections/servicenow/status',r=>r.fulfill({status:400,json:{error:'ServiceNow HTTP 401 Unauthorized: verifica URL, credenziali e permessi'}}));
+  await page.locator('[data-action=servicenow-check]').click();await page.waitForFunction(()=>document.querySelector('[data-servicenow-status]')?.textContent.includes('check the instance URL, credentials and permissions'));
+  await language('it');assert((await page.locator('[data-servicenow-status]').innerText()).includes('verifica URL, credenziali e permessi'));await language('en');
+  assert.equal(await page.evaluate(()=>uiText('Risolvi incident verificato')),'Resolve verified incident');
+  await page.screenshot({path:'/tmp/servicenow-settings-en.png'});
+  await page.locator('[data-action=clear-key][data-field=sn_password]').click();await page.locator('[data-action=save-settings]').click();
+  await page.waitForFunction(()=>app.settings.connections.servicenow?.configured===false);
+  settings=await api('/settings');assert.equal(settings.connections.servicenow.configured,false);
+  await page.unroute('**/api/connections/servicenow/status');
+  await page.locator('[name=sn_auth]').evaluate(e=>{e.focus();e.value='client_credentials';e.dispatchEvent(new Event('change',{bubbles:true}))});
+  await page.locator('.servicenow-oauth').waitFor({state:'visible'});
+  assert.equal(await page.locator('[data-sn-auth=basic]').isVisible(),false);
+  assert.equal(await page.locator('[data-sn-auth=bearer]').isVisible(),false);
+  await page.locator('[name=sn_client_id]').fill('oauth-demo-client');
+  await page.locator('[name=sn_client_secret]').fill('dummy-oauth-client-secret');
+  await page.locator('[name=sn_oauth_scope]').fill('useraccount');
+  await page.route('**/api/connections/servicenow/status',r=>{draftRequest=r.request().postDataJSON();return r.fulfill({json:{connected:true,authentication:'client_credentials',message:'Connessione e lettura incident verificate. Permessi di scrittura da verificare durante il workflow.'}})});
+  await page.locator('[data-action=servicenow-check]').click();await page.waitForFunction(()=>document.querySelector('[data-servicenow-status]')?.textContent.includes('Connection and incident read access verified.'));
+  assert.equal(draftRequest.authentication,'client_credentials');assert.equal(draftRequest.client_id,'oauth-demo-client');assert.equal(draftRequest.client_secret,'dummy-oauth-client-secret');assert.equal(draftRequest.oauth_scope,'useraccount');
+  assert.equal((await api('/settings')).connections.servicenow.configured,false,'Testing must not save OAuth secrets');
+  await page.locator('[data-action=save-settings]').click();await page.waitForFunction(()=>app.settings.connections.servicenow?.authentication==='client_credentials'&&app.settings.connections.servicenow?.configured);
+  await page.waitForFunction(()=>document.querySelector('[name=sn_client_secret]')?.value==='');
+  settings=await api('/settings');assert.equal(settings.connections.servicenow.client_secret,'');assert(!JSON.stringify(settings).includes('dummy-oauth-client-secret'));
+  await language('it');assert((await page.locator('.servicenow-oauth').innerText()).includes('prima della scadenza'));await language('en');assert((await page.locator('.servicenow-oauth').innerText()).includes('before it expires'));
+  assert.equal(await page.locator('[name=sn_client_secret]').getAttribute('type'),'password');
+  await page.locator('.servicenow-oauth').scrollIntoViewIfNeeded();await page.screenshot({path:'/tmp/servicenow-oauth-settings-en.png'});
+  await page.setViewportSize({width:390,height:844});assert(await page.locator('.servicenow-oauth').evaluate(el=>el.scrollWidth<=el.clientWidth+2));
+  await page.locator('[data-action=clear-key][data-field=sn_client_secret]').click();await page.locator('[data-action=save-settings]').click();await page.waitForFunction(()=>app.settings.connections.servicenow?.configured===false);
+  assert.deepEqual(errors,[]);console.log('PASS: ServiceNow Basic and OAuth Client Credentials settings, dedicated OAuth box, draft checks without saving, masked/preserved/cleared secrets, responsive layout and IT/EN labels/status/errors');
+ }finally{await browser?.close();server.kill('SIGINT');await new Promise(r=>server.exitCode!==null?r():server.once('exit',r));fs.rmSync(data,{recursive:true,force:true})}
+})().catch(e=>{console.error(e);process.exit(1)});

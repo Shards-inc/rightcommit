@@ -382,7 +382,11 @@ fn claude_compaction_error(v: &Value) -> Option<&str> {
 }
 
 async fn native(app: &App, uid: i64, run: &Run, session: &NativeSession) -> Result<()> {
-    let settings = app.store.settings(uid)?;
+    let mut settings = app.store.settings(uid)?;
+    if session.runtime=="pi" {
+        let selected=crate::pi_providers::effective(&settings,&session.provider,&session.model,&session.base_url)?;
+        settings.agents.insert("pi".into(),selected);
+    }
     let cfg = settings
         .agents
         .get(&session.runtime)
@@ -391,6 +395,7 @@ async fn native(app: &App, uid: i64, run: &Run, session: &NativeSession) -> Resu
     let rt = session.runtime.as_str();
     let mut cmd = agents::command(app, uid, rt, FsPath::new(&run.workspace), &settings)?;
     configure(app, uid, rt, &settings, &mut cmd)?;
+    if rt == "pi" {crate::pi_local::configure(app,uid,&settings,&session.model,&mut cmd)?;}
     // CODEX_API_KEY is an exec-only shortcut. App Server requires an explicit login;
     // keep it in memory so a personal API key never overwrites the ChatGPT auth file.
     let codex_api_key = if rt == "codex" {

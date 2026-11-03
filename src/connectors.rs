@@ -4,8 +4,9 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 pub fn is_write(n: &Node) -> bool {
-    n.provider == "atlassian"
-        || (n.provider != "local" && ["create_pr", "update_ticket"].contains(&n.operation.as_str()))
+    (n.provider == "github" && n.operation == "api_request" && !["GET", "HEAD", "OPTIONS"].contains(&n.api_method.trim().to_ascii_uppercase().as_str()))
+        || n.provider == "atlassian"
+        || (n.provider != "local" && ["create_pr", "update_ticket", "apply_ticket_plan", "apply_ticket_batch", "create_incident", "order_catalog", "resolve_ticket"].contains(&n.operation.as_str()))
 }
 pub fn effect_digest(n: &Node, r: &Run, s: &Settings) -> String {
     // Supervising a request must not invalidate the exact effect being approved.
@@ -14,7 +15,21 @@ pub fn effect_digest(n: &Node, r: &Run, s: &Settings) -> String {
         .iter()
         .filter(|(binding, _)| binding.as_str() != crate::supervision::BINDING)
         .collect();
-    crate::store::hash(serde_json::to_vec(&json!({"provider":n.provider,"operation":n.operation,"node":n.id,"location":n.location,"command":n.command,"target":s.connections.get(&n.provider).map(|c|(&c.base_url,&c.project,&c.repository)),"run":r.id,"outputs":r.outputs,"sessions":sessions})).unwrap())
+    crate::store::hash(serde_json::to_vec(&json!({"provider":n.provider,"operation":n.operation,"node":n.id,"location":n.location,"command":n.command,"api_request":(&n.api_method,&n.api_path,&n.api_parameters,&n.api_query,&n.api_headers,&n.api_body,&n.api_encoding),"node_target":(&n.organization,&n.project,&n.repository,&n.target),"target":s.connections.get(&n.provider).map(|c|(&c.base_url,&c.project,&c.repository)),"run":r.id,"outputs":r.outputs,"sessions":sessions,"servicenow_auth":s.connections.get("servicenow").map(|c|(&c.authentication,&c.username,crate::store::hash(serde_json::to_vec(&(&c.token,&c.password,&c.client_id,&c.client_secret,&c.oauth_scope)).unwrap())))})).unwrap())
+}
+pub(crate) fn node_config(n: &Node, saved: &ConnectionConfig) -> Result<ConnectionConfig> {
+    let mut c = saved.clone();
+    if !n.repository.trim().is_empty() { c.repository = n.repository.trim().into(); }
+    else if !n.target.is_empty() { c.repository = n.target.clone(); }
+    if !n.project.trim().is_empty() { c.project = n.project.trim().into(); }
+    if n.provider == "azure" && !n.organization.trim().is_empty() {
+        c.base_url = format!("https://dev.azure.com/{}", segment(n.organization.trim())?);
+    }
+    if n.provider == "github" && !n.organization.trim().is_empty() && !c.repository.contains('/') {
+        c.repository = format!("{}/{}", segment(n.organization.trim())?, c.repository);
+    }
+    if n.provider == "github" && c.base_url.is_empty() { c.base_url = "https://api.github.com".into(); }
+    Ok(c)
 }
 fn segment(s: &str) -> Result<&str> {
     ensure!(
@@ -26,7 +41,7 @@ fn segment(s: &str) -> Result<&str> {
     );
     Ok(s)
 }
-fn base(c: &ConnectionConfig) -> Result<String> {
+pub(crate) fn base(c: &ConnectionConfig) -> Result<String> {
     let u = reqwest::Url::parse(&c.base_url)?;
     let host = u.host_str().context("Host mancante")?;
     let extra = std::env::var("NODO_CONNECTOR_HOSTS").unwrap_or_default();
@@ -45,6 +60,9 @@ fn base(c: &ConnectionConfig) -> Result<String> {
     Ok(c.base_url.trim_end_matches('/').into())
 }
 pub async fn execute(app: &App, uid: i64, r: &Run, n: &Node) -> Result<AgentResult> {
+    if n.provider == "servicenow" {
+        return crate::servicenow::execute(app, uid, r, n).await;
+    }
     if n.provider == "atlassian" {
         return crate::twg::execute(app, uid, r, n).await;
     }
@@ -101,7 +119,11 @@ pub async fn execute(app: &App, uid: i64, r: &Run, n: &Node) -> Result<AgentResu
         .connections
         .get(&n.provider)
         .context("Configura il connettore nelle impostazioni personali")?;
+    let c = &node_config(n, c)?;
     ensure!(!c.token.is_empty(), "Token connettore mancante");
+    if n.provider == "github" && n.operation == "api_request" {
+        return crate::github_api::execute(n, c, &s).await;
+    }
     let b = base(c)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -184,4 +206,27 @@ pub(crate) fn validate_ci(body: &Value) -> Result<()> {
         "CI non completa o non positiva per HEAD corrente"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod node_target_tests {
+    use super::*;
+    #[test]
+    fn node_targets_override_personal_defaults() {
+        let saved = ConnectionConfig { base_url: "https://dev.azure.com/old".into(), project: "old".into(), repository: "old".into(), token: "secret".into(), ..Default::default() };
+        let node = Node { provider: "azure".into(), organization: "team".into(), project: "project".into(), repository: "repo".into(), ..Default::default() };
+        let c = node_config(&node, &saved).unwrap();
+        assert_eq!((&*c.base_url, &*c.project, &*c.repository, &*c.token), ("https://dev.azure.com/team", "project", "repo", "secret"));
+        assert!(node_config(&Node { organization: "bad/path".into(), ..node }, &saved).is_err());
+    }
+    #[test]
+    fn github_owner_and_legacy_targets() {
+        let node = Node { provider: "github".into(), organization: "owner".into(), repository: "repo".into(), ..Default::default() };
+        let c = node_config(&node, &ConnectionConfig::default()).unwrap();
+        assert_eq!(c.repository, "owner/repo");
+        assert_eq!(c.base_url, "https://api.github.com");
+        let saved = ConnectionConfig { repository: "legacy/repo".into(), ..Default::default() };
+        assert_eq!(node_config(&Node::default(), &saved).unwrap().repository, "legacy/repo");
+        assert_eq!(node_config(&Node { target: "workflow/repo".into(), ..Default::default() }, &saved).unwrap().repository, "workflow/repo");
+    }
 }

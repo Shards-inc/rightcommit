@@ -1,0 +1,92 @@
+{
+  "id": "servicenow-requests-from-files",
+  "name": "ServiceNow · Requests from configuration files",
+  "description": "Reads requests from a file and uses configuration to select catalog items and fill their variables. Shows the orders for approval, submits them to ServiceNow and reports each outcome, reusing results already recorded.",
+  "entry": "prepare-requests",
+  "execution": {
+    "mode": "interactive",
+    "allow_external_writes": false,
+    "runtime": "pi"
+  },
+  "nodes": [
+    {
+      "id": "source",
+      "kind": "Source",
+      "title": "ServiceNow examples and configuration",
+      "source_type": "examples",
+      "source_mode": "copy",
+      "location": "servicenow",
+      "x": 40,
+      "y": 60
+    },
+    {
+      "id": "agent",
+      "kind": "Agent",
+      "title": "Pi requirements operator",
+      "runtime": "pi",
+      "x": 40,
+      "y": 280
+    },
+    {
+      "id": "prepare-requests",
+      "kind": "Task",
+      "agent": "agent",
+      "title": "Validate Request input and prepare plans",
+      "x": 300,
+      "y": 60,
+      "prompt": "Read README.md, requests.json and config/catalog-routing.json as data. Do not change Personal Settings or credentials. Run python3 request_batch.py --config config/catalog-routing.json --tickets requests.json --out output/request-plans.json. Inspect each resulting plan: request_id, catalog_route and request_fields must match the input exactly. Do not guess catalog sys_ids, variable names, identity or requested_for; missing configuration is reported by the native connector per Request. Never call ServiceNow or order from a shell."
+    },
+    {
+      "id": "apply-requests",
+      "kind": "Connection",
+      "provider": "servicenow",
+      "operation": "apply_ticket_batch",
+      "location": "output/request-plans.json",
+      "target": "config/catalog-routing.json",
+      "title": "Apply file-configured Requests",
+      "x": 600,
+      "y": 60
+    },
+    {
+      "id": "report",
+      "kind": "Task",
+      "agent": "agent",
+      "title": "Report each Request outcome",
+      "x": 900,
+      "y": 60,
+      "prompt": "Read output/servicenow-apply-requests.json and requests.json. Report one row per Request with catalog route, applied/reused/blocked/attention_required and the native request number/sys_id where available. Explicitly name configuration files/keys that must be completed; do not suggest editing Personal Settings for catalog details. Do not claim success for blocked or uncertain requests. Do not contact ServiceNow. Run python3 -m unittest discover -s . -p test_examples.py -v."
+    }
+  ],
+  "edges": [
+    {
+      "from": "source",
+      "to": "agent",
+      "kind": "context",
+      "outcome": ""
+    },
+    {
+      "from": "agent",
+      "to": "prepare-requests",
+      "kind": "context",
+      "outcome": ""
+    },
+    {
+      "from": "agent",
+      "to": "report",
+      "kind": "context",
+      "outcome": ""
+    },
+    {
+      "from": "prepare-requests",
+      "to": "apply-requests",
+      "kind": "control",
+      "outcome": ""
+    },
+    {
+      "from": "apply-requests",
+      "to": "report",
+      "kind": "control",
+      "outcome": ""
+    }
+  ]
+}

@@ -74,7 +74,7 @@ pub async fn preview(
         artifacts += app.store.artifacts(u.id, &r.id)?.len()
     }
     Ok(Json(
-        json!({"run_ids":runs.iter().map(|r|r.id.clone()).collect::<Vec<_>>(),"runs":runs.len(),"artifacts":artifacts,"active":active(&app,&runs)||chats.iter().any(|c|c.busy),"manager_chats":chats.len()}),
+        json!({"run_ids":runs.iter().map(|r|r.id.clone()).collect::<Vec<_>>(),"runs":runs.len(),"artifacts":artifacts,"active":active(&app,&runs)||chats.iter().any(|c|c.busy),"manager_chats":chats.len(),"schedules":crate::schedules::workflow_count(&app,u.id,&id)?}),
     ))
 }
 #[derive(Deserialize)]
@@ -284,6 +284,10 @@ pub(crate) fn perform(app: &App, uid: i64, wid: &str, expected: &[String]) -> Re
                 )?;
             }
             tx.execute(
+                "DELETE FROM schedule_occurrences WHERE user_id=? AND run_id=?",
+                params![uid, rid],
+            )?;
+            tx.execute(
                 "DELETE FROM runs WHERE user_id=? AND id=?",
                 params![uid, rid],
             )?;
@@ -298,6 +302,8 @@ pub(crate) fn perform(app: &App, uid: i64, wid: &str, expected: &[String]) -> Re
                 params![uid, id],
             )?;
         }
+        tx.execute("DELETE FROM schedule_occurrences WHERE user_id=? AND schedule_id IN (SELECT id FROM schedules WHERE user_id=? AND workflow_id=?)", params![uid,uid,wid])?;
+        tx.execute("DELETE FROM schedules WHERE user_id=? AND workflow_id=?", params![uid,wid])?;
         ensure!(
             tx.execute(
                 "DELETE FROM workflows WHERE user_id=? AND id=?",
@@ -383,6 +389,7 @@ mod tests {
         run.sessions.insert(
             "author".into(),
             NativeSession {
+                provider: String::new(), base_url: String::new(),
                 native_id: sid.clone(),
                 runtime: "pi".into(),
                 turns: 1,
@@ -516,7 +523,8 @@ mod tests {
         run.sessions.insert(
             "author".into(),
             NativeSession {
-                runtime: "pi".into(),
+                provider: String::new(), base_url: String::new(),
+runtime: "pi".into(),
                 native_id: sid,
                 ..Default::default()
             },

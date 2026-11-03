@@ -1,0 +1,80 @@
+{
+  "id": "servicenow-oauth-check",
+  "name": "ServiceNow · OAuth connection test",
+  "description": "Verify the saved OAuth Client Credentials connection with a read-only incident request, then produce a report confirming the authentication actually used.",
+  "entry": "check-servicenow",
+  "execution": {
+    "mode": "interactive",
+    "runtime": "pi",
+    "allow_external_writes": false
+  },
+  "nodes": [
+    {
+      "id": "source",
+      "kind": "Source",
+      "title": "ServiceNow examples and setup",
+      "source_type": "examples",
+      "source_mode": "copy",
+      "location": "servicenow",
+      "x": 40,
+      "y": 60
+    },
+    {
+      "id": "agent",
+      "kind": "Agent",
+      "title": "Pi · connection verifier",
+      "runtime": "pi",
+      "x": 40,
+      "y": 280
+    },
+    {
+      "id": "check-servicenow",
+      "kind": "Connection",
+      "title": "Check OAuth and incident read access",
+      "provider": "servicenow",
+      "operation": "check_connection",
+      "x": 300,
+      "y": 60
+    },
+    {
+      "id": "report",
+      "kind": "Task",
+      "title": "OAuth verification report",
+      "agent": "agent",
+      "prompt": "Read the native output of check-servicenow (check_connection). Write output/oauth-check.md in English with outcome, instance, reported authentication method, any returned identity or record number, and only the HTTP status/check timestamp actually present in the evidence. Mark absent fields as not provided. Keep the report creation timestamp separate. A successful check confirms incident read access only, not write, catalog or all-table permissions. Confirm OAuth Client Credentials only if authentication equals client_credentials and the native check completed successfully. If it is basic, bearer, absent or inconsistent, explicitly report OAuth NOT CONFIRMED and return a blocked result after writing the report. Never read credentials, inspect settings files, print tokens or secrets, contact ServiceNow from shell, or create/update records. Summarize the actual outcome and report path.",
+      "x": 600,
+      "y": 60
+    },
+    {
+      "id": "notes",
+      "kind": "Comment",
+      "title": "Personal Settings · setup guide",
+      "text": "# Configure Personal Settings before running\n\n1. Open **Personal settings → Connections → ServiceNow**.\n2. **ServiceNow instance URL**: enter your PDI URL, e.g. `https://devNNNN.service-now.com`.\n3. **Authentication**: select **OAuth · Client Credentials**.\n4. In the **OAuth** box, enter the **Client ID** and **Client Secret** from your ServiceNow OAuth application.\n5. **OAuth scopes**: enter `rightcommit_table_read`.\n6. Click **Test connection**, then **Save settings**. Testing alone does not save the values used by workflow runs.\n7. In **Personal settings → Agents → Pi**, configure a provider, model and credentials for the report task, then save.\n8. Return here and click **Run workflow**.\n\n**PDI prerequisite:** enable Client Credentials, set an authorized OAuth application user, map `rightcommit_table_read` to **Table API → GET**, and associate that SAME Auth Scope with the OAuth application.\n\nrightcommit obtains and renews access tokens automatically. Saved secret fields remain blank: leave them blank to retain the saved value; use the trash button to remove it.\n\n**Result:** reads one incident and writes `output/oauth-check.md`. No ServiceNow records are changed. Keep credentials in Personal Settings, never in this comment or workflow.\n\nFull PDI/scope instructions: `guides/CONFIGURING_SERVICENOW.md` in the project repository.",
+      "markdown": true,
+      "width": 620,
+      "height": 600,
+      "x": 40,
+      "y": 470
+    }
+  ],
+  "edges": [
+    {
+      "from": "source",
+      "to": "agent",
+      "kind": "context",
+      "outcome": ""
+    },
+    {
+      "from": "agent",
+      "to": "report",
+      "kind": "context",
+      "outcome": ""
+    },
+    {
+      "from": "check-servicenow",
+      "to": "report",
+      "kind": "control",
+      "outcome": ""
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "upstream": "https://github.com/github/spec-kit",
+  "version": "1.2.2",
+  "source": "Reused from examples/helpdesk vendor assets; see docs/speckit-vendor.json",
+  "commands": {
+    "speckit.specify.md": "21634a45dfcf642fddb1645f4ad2980f98c89778442e47663df8a6c3a1eaf8bc",
+    "speckit.checklist.md": "fa58b19e2604ce56ff5f5427061f6ee94fd44d7194e740b874824d9bf21ee15b"
+  }
+}

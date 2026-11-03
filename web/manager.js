@@ -93,7 +93,7 @@
  }
  function renderChat(){
   if(!open)return;const state=data();
-  $('#manager-panel').innerHTML=`<div class="manager-heading"><div class="manager-header-actions"><button type="button" id="manager-reset" class="manager-reset" ${state.busy?'disabled':''} title="Azzera chat">${icon('rotate-cw')}Azzera chat</button><button type="button" class="icon-button" id="manager-compact" aria-expanded="${!faceCollapsed}" aria-controls="manager-face" aria-label="${esc(uiText(faceCollapsed?'Mostra faccina':'Nascondi faccina'))}" title="${esc(uiText(faceCollapsed?'Mostra faccina':'Nascondi faccina'))}">${icon(faceCollapsed?'maximize-2':'minimize-2')}</button><button type="button" class="icon-button" id="manager-close" aria-label="Chiudi chat">${icon('x')}</button></div>${managerFace(state)}<div class="manager-title"><b>Project manager</b><small id="manager-context"></small></div></div><div id="manager-messages" role="log" aria-label="Messaggi del project manager" aria-live="polite">${state.messages.length?state.messages.map(m=>`<article data-no-i18n class="manager-message ${m.role==='user'?'from-user':'from-manager'}"><b>${m.role==='user'?uiText('Tu'):'Project manager'}</b><div class="${m.role==='assistant'?'manager-markdown markdown':''}">${m.role==='assistant'&&m.html?m.html:esc(m.text).replace(/\n/g,'<br>')}</div></article>`).join(''):`<div class="manager-empty">${icon('project-manager')}<p>Descrivi il workflow che vuoi creare, chiedi una modifica ai nodi o domandami a che punto è la run.</p></div>`}${state.busy?`<p class="manager-thinking" role="status">${icon('loader-circle')}Il manager sta analizzando il contesto…</p>`:''}</div><div id="manager-feedback" role="status">${state.notice?`<p class="manager-notice">${esc(state.notice)}</p>`:''}${state.warning?`<p class="manager-warning">${esc(uiText('Da completare prima di Esegui:'))} ${esc(state.warning)}</p>`:''}${state.error?`<p class="error">${esc(state.error)}</p>`:''}${state.proposal?`<div class="manager-proposal"><p>Proposta pronta. La run e le modifiche fatte nel frattempo restano conservate.</p><button type="button" id="manager-apply">${icon('workflow')}${app.run||state.proposalKind==='create'?uiText('Apri come nuovo workflow'):uiText('Applica alla bozza')}</button></div>`:''}${state.undo?'<button type="button" id="manager-undo">Annulla ultima modifica del manager</button>':''}${previousDraft&&!app.run?'<button type="button" id="manager-restore">Torna alla bozza precedente</button>':''}</div><form id="manager-form"><label for="manager-input">Messaggio al manager</label><div class="manager-compose-row"><textarea id="manager-input" rows="1" maxlength="32000" placeholder="Es. aggiungi una review dopo i test…" required>${esc(state.input)}</textarea><button type="submit" class="primary manager-send" ${state.busy?'disabled':''}>${icon('play')}Invia</button></div><span class="small manager-runtime">${esc(app.settings?.default_runtime||state.runtime||'')} · ${uiText('Credenziali personali')}</span></form>`;
+  $('#manager-panel').innerHTML=`<div class="manager-heading"><div class="manager-header-actions"><button type="button" id="manager-reset" class="manager-reset" ${state.busy?'disabled':''} title="Azzera chat">${icon('rotate-cw')}Azzera chat</button><button type="button" class="icon-button" id="manager-compact" aria-expanded="${!faceCollapsed}" aria-controls="manager-face" aria-label="${esc(uiText(faceCollapsed?'Mostra faccina':'Nascondi faccina'))}" title="${esc(uiText(faceCollapsed?'Mostra faccina':'Nascondi faccina'))}">${icon(faceCollapsed?'maximize-2':'minimize-2')}</button><button type="button" class="icon-button" id="manager-close" aria-label="Chiudi chat">${icon('x')}</button></div>${managerFace(state)}<div class="manager-title"><b>Project manager</b><small id="manager-context"></small></div></div><div id="manager-messages" role="log" aria-label="Messaggi del project manager" aria-live="polite">${state.messages.length?state.messages.map(m=>`<article data-no-i18n class="manager-message ${m.role==='user'?'from-user':'from-manager'}"><b>${m.role==='user'?uiText('Tu'):'Project manager'}</b><div class="${m.role==='assistant'?'manager-markdown markdown':''}">${m.role==='assistant'&&m.html?m.html:esc(m.text).replace(/\n/g,'<br>')}</div></article>`).join(''):`<div class="manager-empty">${icon('project-manager')}<p>Descrivi il workflow che vuoi creare, chiedi una modifica ai nodi o domandami a che punto è la run.</p></div>`}${state.busy?`<p class="manager-thinking" role="status">${icon('loader-circle')}Il manager sta analizzando il contesto…</p>`:''}</div><div id="manager-feedback" role="status">${state.notice?`<p class="manager-notice">${esc(state.notice)}</p>`:''}${state.warning?`<p class="manager-warning">${esc(uiText('Da completare prima di Esegui:'))} ${esc(state.warning)}</p>`:''}${state.error?`<section class="manager-error" role="alert"><button type="button" class="icon-button" id="manager-dismiss-error" aria-label="Chiudi errore">${icon('x')}</button><p>${esc(uiText(state.error))}</p><button type="button" id="manager-error-settings">${esc(uiText('Impostazioni agenti'))}</button></section>`:''}${state.proposal?`<div class="manager-proposal"><p>Proposta pronta. La run e le modifiche fatte nel frattempo restano conservate.</p><button type="button" id="manager-apply">${icon('workflow')}${app.run||state.proposalKind==='create'?uiText('Apri come nuovo workflow'):uiText('Applica alla bozza')}</button></div>`:''}${state.undo?'<button type="button" id="manager-undo">Annulla ultima modifica del manager</button>':''}${previousDraft&&!app.run?'<button type="button" id="manager-restore">Torna alla bozza precedente</button>':''}</div><form id="manager-form"><label for="manager-input">Messaggio al manager</label><div class="manager-compose-row"><textarea id="manager-input" rows="1" maxlength="32000" placeholder="Es. aggiungi una review dopo i test…" required>${esc(state.input)}</textarea><button type="submit" class="primary manager-send" ${state.busy?'disabled':''}>${icon('play')}Invia</button></div><span class="small manager-runtime">${esc(app.settings?.default_runtime||state.runtime||'')} · ${uiText('Credenziali personali')}</span></form>`;
   $('#manager-compact').onclick=()=>{
     faceCollapsed=!faceCollapsed;
     $('#manager-face').hidden=faceCollapsed;
@@ -103,6 +103,12 @@
   };
   updateContextLabel();$('#manager-close').onclick=()=>toggle(false);$('#manager-reset').onclick=resetChat;$$('.manager-markdown a').forEach(a=>{a.target='_blank';a.rel='noopener noreferrer'});
   const input=$('#manager-input');
+  $('#manager-dismiss-error')?.addEventListener('click',()=>{
+   state.error='';$('#manager-feedback .manager-error')?.remove();
+   const face=$('#manager-face');if(face){const holder=document.createElement('div');holder.innerHTML=managerFace(state);face.replaceWith(holder.firstElementChild)}
+   input.focus();
+  });
+  $('#manager-error-settings')?.addEventListener('click',()=>settingsDialog('agents'));
   input.oninput=e=>{state.input=e.target.value;resizeInput(e.target)};
   inputObserver.disconnect();inputWidth=0;resizeInput(input);inputObserver.observe(input);
   $('#manager-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!state.busy)$('#manager-form').requestSubmit()}};
@@ -142,8 +148,8 @@
  }
  async function send(event){
   event.preventDefault();const state=data(),message=state.input.trim();if(state.busy||!message)return;
-  const originalScope=scope,workflow=structuredClone(currentWorkflow()),base=JSON.stringify(workflow),runId=app.run?.id||null;
-  state.busy=true;state.version++;state.error='';state.notice='';state.input='';state.messages.push({role:'user',text:message});renderChat();
+  const originalDraft=state.input,originalScope=scope,workflow=structuredClone(currentWorkflow()),base=JSON.stringify(workflow),runId=app.run?.id||null;
+  state.busy=true;state.version++;state.error='';state.notice='';state.input='';if(state.messages.at(-1)?.role!=='user'||state.messages.at(-1)?.text!==message)state.messages.push({role:'user',text:message});renderChat();$('#manager-input')?.focus();
   try{
    const response=await api('/manager/chat',{workflow,run_id:runId,message,conversation_id:state.conversationId||null});state.messages=response.messages;state.runtime=response.runtime;state.conversationId=response.conversation_id;state.warning=response.validation_warning;
    if(response.workflow){
@@ -151,7 +157,17 @@
     state.notice=uiText('Editor aggiornato:')+' '+response.workflow.nodes.length+' '+uiText('nodi')+', '+response.workflow.edges.length+' '+uiText('collegamenti');
     if(originalScope===key()&&!app.run&&JSON.stringify(app.wf)===base){if(response.kind==='create'){state.proposal=response.workflow;await applyPending(state)}else{applyWorkflow(response.workflow,state)}}else{state.notice='';state.proposal=response.workflow}
    }
-  }catch(error){state.error=error.message}
-  finally{state.busy=false;if(scope===originalScope&&open)renderChat()}
+  }catch(error){state.error=error.message;if(!state.input)state.input=originalDraft}
+  finally{
+   state.busy=false;
+   if(scope===originalScope&&open){
+    const input=$('#manager-input'),focused=document.activeElement===input,selection=input?[input.selectionStart,input.selectionEnd]:null;
+    renderChat();
+    if(!document.querySelector('dialog[open]')&&(focused||state.error)){
+     const next=$('#manager-input');next.focus();
+     if(selection&&focused&&next.value===input.value)next.setSelectionRange(...selection);else next.setSelectionRange(next.value.length,next.value.length);
+    }
+   }
+  }
  }
 })();

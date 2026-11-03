@@ -1,0 +1,27 @@
+{
+  "namespace": "northstar-demo",
+  "tickets": [
+    {
+      "request_id": "demo-incident-001",
+      "chatInput": "La VPN non funziona: errore di connessione"
+    },
+    {
+      "request_id": "demo-request-001",
+      "chatInput": "Richiedo installazione software Python",
+      "catalog_route": "software_installation",
+      "fields": {
+        "software_name": "Python",
+        "version": "3.12",
+        "justification": "Test funzionale sulla PDI"
+      }
+    },
+    {
+      "request_id": "demo-faq-001",
+      "chatInput": "Come posso fare password reset?"
+    },
+    {
+      "request_id": "demo-unknown-001",
+      "chatInput": "Quale sarà il meteo domani?"
+    }
+  ]
+}

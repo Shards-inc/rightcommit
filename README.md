@@ -78,6 +78,14 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
 - **Beyond Traditional Automation.** Automate business processes with orchestrated AI agents.
   Run workflows on a schedule, attended or unattended, with human oversight where needed.
 
+## Scheduled workflows
+
+The **Run execution** menu offers **Run now** and **Scheduled**. Schedule a single run or a recurring workflow every N minutes/hours, daily or weekly, with a time zone and optional end date. The dialog previews upcoming occurrences using the app's existing controls.
+
+Each schedule appears once in the execution register and workflow history, with its runs grouped underneath. Pause or delete the schedule to stop future starts; use the existing run controls to pause or stop an execution already in progress. Saved workflow changes apply to subsequent runs.
+
+The local service must be running. Missed occurrences are skipped, and a previous run still running, paused or waiting for input prevents overlapping starts from that schedule. Schedule settings and history survive service restarts.
+
 ## Connections
 
 - **Agents:** Claude Code, Codex and Pi, with an API key, a login or a gateway (Anthropic,
@@ -94,6 +102,36 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
 - **Consultants** who reuse a method from client to client, with proof of what was done.
 - **Teams** running it on their own servers, with multiple users, separate keys and
   workspaces.
+
+### Pi with multiple providers
+
+In **Personal settings → Agents → Pi**, choose **Multi-provider**. Each Pi Agent node then
+gets a **Provider** selector and a model field. The default Pi provider/model apply to the
+manager, supervisor and nodes that inherit personal preferences.
+
+Set provider credentials and parameters in `.env` before starting the app, for example
+`OPENAI_API_KEY`, `XAI_API_KEY`, `AZURE_OPENAI_BASE_URL` or `AWS_REGION`. Native Pi logins
+are also supported. The generic personal API-key field is ignored in Multi-provider mode;
+only variables declared for the selected provider reach its Pi process. See `.env.example`
+for supported variables. Credential files and cloud profiles must be accessible inside the
+container when using Docker.
+
+When running `rightcommit` without Docker, `.env` is loaded automatically from the current
+working directory before services start. Existing process environment variables take
+precedence, including values supplied by Docker Compose. Empty file entries remain unset,
+so optional placeholders keep platform defaults. A missing `.env` is allowed; an
+invalid file stops startup without printing its contents. Parent directories are not searched,
+and MCP utility commands do not load a workspace `.env`.
+
+For local models, set `PI_LOCAL_BASE_URL` and optionally `PI_LOCAL_API_KEY`; an Agent node
+can override the local URL. Provider/model selections and local endpoint overrides are recorded with each
+session, and missing provider configuration is reported before workflow preparation.
+Use Memory nodes when handing work to another Agent, including across providers.
+
+The chat-provider catalog is synchronized with the pinned Pi version in
+`distribution/pi-providers.json`. After updating Pi, regenerate it with
+`node scripts/sync-pi-providers.mjs /path/to/pi-coding-agent` and update the environment
+entries in both Compose files and `.env.example` for any newly introduced providers.
 
 ## Quickstart
 
@@ -171,8 +209,11 @@ By default the app listens only on `localhost`. Your code and keys stay on your 
 | [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md) | Add packages from pi.dev to the Pi agent |
 | [ADD-OPENSPEC.md](ADD-OPENSPEC.md) | Use OpenSpec in your workflows |
 | [UPDATE-PI-DEFAULT-PACKAGES.md](UPDATE-PI-DEFAULT-PACKAGES.md) | Update the Pi tools rightcommit ships (maintainers) |
+| [How-to Guides](guides/README.md) | Configure access and run workflow examples for ServiceNow (ITSM, catalog Requests and Spec Kit), Atlassian (Jira, Bitbucket and Confluence), and GitHub (issues and CI) |
 
 ## License
+
+Copyright (c) 2026 Lorenzo Toscano
 
 rightcommit is [Fair Source](https://fair.io), released under the
 **[Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2)](LICENSE)**.
@@ -202,3 +243,5 @@ Questions and feedback: [hello@rightcommit.com](mailto:hello@rightcommit.com).
 <sub>Claude Code, Codex, Pi, GitHub, Azure DevOps, ServiceNow, Jira, Confluence, Bitbucket,
 Spec Kit, Rust, Docker and other names and marks belong to their owners. rightcommit is not
 affiliated with them.</sub>
+
+[Guides](guides/README.md) · [Configuring ServiceNow: ITSM classification, catalog Requests and Spec Kit](guides/CONFIGURING_SERVICENOW.md).

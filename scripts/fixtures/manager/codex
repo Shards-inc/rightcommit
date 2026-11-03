@@ -2,9 +2,11 @@
 # Test-only deterministic native CLI. Never put this folder on production PATH.
 import json,sys,pathlib,uuid
 args=sys.argv[1:]
-assert '--sandbox' in args and args[args.index('--sandbox')+1] in ('workspace-write','danger-full-access'), 'Manager must have writable tools'
+assert '--sandbox' in args and args[args.index('--sandbox')+1] in ('read-only','workspace-write','danger-full-access'), 'Manager must receive current permissions'
 prompt=sys.stdin.read()
-assert 'You have read, write and edit tools' in prompt, 'Manager contract must allow file edits'
+enabled = 'Current permissions: read, write' in prompt
+assert ('Current permissions: READ ONLY' in prompt) != enabled, 'Manager contract must state current permissions'
+assert (args[args.index('--sandbox')+1] != 'read-only') == enabled, 'Sandbox must match current permissions'
 context=pathlib.Path('context')
 w=json.loads((context/'workflow.json').read_text())
 manifest=json.loads((context/'manifest.json').read_text())

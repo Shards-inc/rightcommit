@@ -3,6 +3,59 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.1.0] - 2026-11-04
+
+### Added
+
+- Scheduled runs. The **Run execution** menu offers **Run now** and **Scheduled**: a single
+  start, or one every N minutes or hours, daily or weekly, with a time zone and an optional
+  end date. Each schedule groups its runs. Pausing or deleting a schedule stops only future
+  starts, and a start is skipped while the previous run is still open.
+- A native ServiceNow connector. It reads incidents and catalog Requests, creates or reuses
+  incidents, and updates and resolves tickets. It signs in with Basic, Bearer or OAuth Client
+  Credentials, and the OAuth token is fetched automatically and reused until it expires.
+  Writes still wait for approval.
+- A **ServiceNow and ITSM** section in the template catalog:
+  - ITSM ticket classification and resolution with Pi and an internal RAG index, in a generic
+    version and a Northstar knowledge base demo. Ticket batches are deduplicated across runs.
+  - Catalog Requests from configuration files.
+  - A ServiceNow software requirement turned into a Spec Kit specification.
+  - An OAuth connection test.
+- GitHub API requests from a Connection node, with a searchable catalog of all 1,254 REST
+  operations, plus GraphQL. POST, PUT, PATCH and DELETE requests wait for approval.
+- New templates under **SDLC with Connections**:
+  - GitHub: connection test, issue to requirements and tests, commit CI readiness, and demo
+    CI setup.
+  - Atlassian: Jira issue to requirements and tests, Jira + Bitbucket PR review dossier, and
+    Confluence page to SDLC briefing.
+- Connection nodes can set their own organization, project and repository instead of the
+  personal defaults, and show the provider's icon.
+- Atlassian sign-in from Personal settings with browser OAuth, scoped Bitbucket tokens and a
+  **Test connection** button.
+- A **Multi-provider** mode for Pi. Each Pi Agent node picks a provider from Pi's catalog
+  (42 providers in Pi 1.4.0) and a model. Credentials come from `.env` or native Pi logins.
+  Local models work through `PI_LOCAL_BASE_URL`.
+- Outside Docker, rightcommit loads `.env` from the current folder at startup. Variables that
+  are already set take precedence.
+- How-to guides for ServiceNow, GitHub and Atlassian in [guides/](guides/README.md).
+
+### Changed
+
+- The interface starts in English on first launch. An Italian choice you saved is kept.
+- The login card has a cleaner wordmark.
+- The notice about agents that are not configured can be turned off, separately in each
+  browser.
+- The README has a demo image and describes orchestration, scheduled runs and Pi with
+  multiple providers.
+- The package check on GitHub skips changes that only touch documentation and caches Rust
+  builds.
+
+### Fixed
+
+- Settings are protected from browser and password-manager autofill. Autofill that nobody
+  asked for is ignored, and saving is blocked if a ServiceNow credential lands in an agent
+  field.
+
 ## [1.0.2] - 2026-11-02
 
 ### Added

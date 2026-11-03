@@ -12,10 +12,13 @@
   const label=document.createElement('span');label.className='brand-accessible';label.textContent='right';
   prefix.replaceWith(label,slot);
   const row=document.createElement('b');row.textContent='right';reel.append(row);
+  // The topbar reserves the prefix width in CSS, including while the app is hidden.
+  const fixedPrefix=!!brand.closest('.topbar');
   // The slot is as wide as "right", so the wordmark has no gap; longer words overflow to the left.
-  const fit=()=>{const range=document.createRange();range.selectNodeContents(row);const width=range.getBoundingClientRect().width;if(width)slot.style.width=width/parseFloat(getComputedStyle(slot).fontSize)+.05+'em'};
+  const fit=()=>{if(fixedPrefix)return;const current=reel.firstElementChild;if(reel.children.length!==1||current?.textContent!=='right')return;const range=document.createRange();range.selectNodeContents(current);const width=range.getBoundingClientRect().width;if(width)slot.style.width=width/parseFloat(getComputedStyle(slot).fontSize)+.05+'em'};
   new ResizeObserver(fit).observe(brand);document.fonts?.ready.then(fit);
-  return {brand,reel,lastRun:null,running:false};
+  fit();
+  return {brand,reel,fit,lastRun:null,running:false};
  }).filter(Boolean);
  const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
  async function spin(logo){
@@ -36,8 +39,32 @@
     if(i<sequence.length-2)await pause(100+i*25);
    }
   }finally{
-   const row=document.createElement('b');row.textContent='right';logo.reel.replaceChildren(row);
-   logo.reel.style.transform='';logo.running=false;
+   const soften=logo.brand.closest('#auth')&&!reducedMotion.matches&&!document.hidden&&logo.brand.getClientRects().length;
+   let fade=null;
+   try{
+    if(soften){
+     fade=logo.brand.animate([{opacity:1},{opacity:0}],{duration:180,easing:'ease-out',fill:'forwards'});
+     await fade.finished;
+    }
+    const row=document.createElement('b');row.textContent='right';logo.reel.replaceChildren(row);
+    logo.reel.style.transform='';logo.fit();
+    if(soften){
+     // Keep the whole logo invisible while its final width is measured and centered.
+     const fadeOut=fade;
+     fade=logo.brand.animate([
+      {opacity:0,transform:'translateX(-32px)',offset:0,easing:'cubic-bezier(.2,.7,.3,1)'},
+      {opacity:1,transform:'translateX(12px)',offset:.44,easing:'ease-in-out'},
+      {opacity:1,transform:'translateX(-6px)',offset:.66,easing:'ease-in-out'},
+      {opacity:1,transform:'translateX(3px)',offset:.82,easing:'ease-in-out'},
+      {opacity:1,transform:'translateX(-1px)',offset:.93,easing:'ease-in-out'},
+      {opacity:1,transform:'translateX(0)',offset:1}
+     ],{duration:900,easing:'linear',fill:'forwards'});
+     fadeOut.cancel();
+     await fade.finished;
+    }
+   }finally{
+    fade?.cancel();logo.running=false;
+   }
   }
  }
  function check(){
@@ -124,9 +151,54 @@ function appConfirm({title,message,accept='Conferma',danger=false}){
   });
 }
 const closeModal=()=>$('#dialog').close();
-function showAuth(){closeAccountMenu();window.resetTemplateManager?.();app.stream?.close();$('#dialog').close();$$('dialog.app-confirm').forEach(dialog=>dialog.close());$('#app').hidden=true;$('#auth').hidden=false}
-let registerMode=false,authInfo={};async function init(){hydrate();try{authInfo=await api('/auth/status');registerMode=authInfo.setup_required;$('#auth-title').textContent=registerMode?'Crea il tuo workspace':'Accedi al workspace';$('#auth-submit').textContent=registerMode?'Crea amministratore':'Accedi';$('#auth-note').textContent=registerMode?'Il primo account può creare gli altri utenti.':'Ogni account ha workflow, sessioni e credenziali separati.';$('#auth-switch').hidden=!authInfo.registration_open||registerMode;app.user=await api('/auth/me');await boot()}catch(e){showAuth();if(e.message!=='Accedi per continuare')$('#auth-error').textContent=''}}
-async function boot(){resetActivityLogs();latestRun=null;latestRunWorkflow='';++latestRunRequest;app.user=await api('/auth/me');app.settings=await api('/settings');app.workflows=await api('/workflows');await loadWorkflowTopics();await ragRefresh();await a2aRefresh();app.runs=await api('/runs');$('#auth').hidden=true;$('#app').hidden=false;$('#account').textContent=app.user.email[0].toUpperCase();$('#account').dataset.tip=app.user.email;$('#footer-info').textContent=app.user.isolated?'Workspace personali isolati · Sessioni persistenti':'Modalità sviluppo · Isolamento dei file non attivo';workflowOptions();selectWorkflow(pendingDraftId()||workflowOrganization.recent[0]);}
+function configureAuthAutofill(enabled){
+ const form=$('#auth-form');form.authAutofillAllowed=enabled;form.autocomplete=enabled?'on':'off';
+ for(const field of [form.elements.email,form.elements.password]){
+  field.autocomplete=enabled?('section-rightcommit-account '+(field.name==='email'?'username':registerMode?'new-password':'current-password')):'off';
+ }
+ for(const element of [form,form.elements.email,form.elements.password])for(const attribute of ['data-lpignore','data-1p-ignore','data-bwignore']){
+  if(enabled)element.removeAttribute(attribute);else element.setAttribute(attribute,'true');
+ }
+ const button=$('#auth-autofill');button.setAttribute('aria-pressed',String(enabled));button.textContent=uiText(enabled?'Disattiva compilazione automatica':'Usa gestore password');
+ $('#auth-credentials-note').textContent=uiText(enabled?'Gestore password abilitato per il tuo account rightcommit.':'Inserisci i dati del tuo account rightcommit. Per usare le credenziali salvate, abilita il gestore password.');
+}
+function resetAuthForm(){
+ const form=$('#auth-form');form.reset();form.authDraft={email:'',password:''};
+ for(const name of ['email','password'])form.elements[name].value='';
+ $('#auth-error').textContent='';configureAuthAutofill(false);
+}
+function updateAuthMode(){
+ $('#auth-title').textContent=uiText(registerMode?(authInfo.setup_required?'Crea il tuo workspace':'Crea un account'):'Accedi al workspace');
+ $('#auth-submit').textContent=uiText(registerMode?(authInfo.setup_required?'Crea amministratore':'Registrati'):'Accedi');
+ $('#auth-note').textContent=uiText(authInfo.setup_required?'Il primo account può creare gli altri utenti.':'Ogni account ha workflow,\nsessioni e credenziali separati.');
+ $('#auth-switch').hidden=!authInfo.registration_open||authInfo.setup_required;
+ resetAuthForm();
+}
+function restoreAuthField(field){
+ const form=$('#auth-form');if(form.authAutofillAllowed||!['email','password'].includes(field.name))return false;
+ const value=form.authDraft?.[field.name]||'',changed=field.value!==value;if(changed)field.value=value;return changed;
+}
+function authCredentials(form){
+ if(!form.authAutofillAllowed){
+  const changed=[form.elements.email,form.elements.password].map(restoreAuthField).some(Boolean);
+  if(changed){$('#auth-error').textContent=uiText('La compilazione automatica non richiesta è stata ignorata. Inserisci i dati del tuo account rightcommit o abilita il gestore password.');return null}
+ }
+ if(!form.reportValidity())return null;
+ return {email:form.elements.email.value,password:form.elements.password.value};
+}
+function showAuth(){closeAccountMenu();window.resetTemplateManager?.();app.stream?.close();$('#dialog').close();$$('dialog.app-confirm').forEach(dialog=>dialog.close());$('#app').hidden=true;$('#auth').hidden=false;resetAuthForm()}
+let registerMode=false,authInfo={};async function init(){hydrate();try{authInfo=await api('/auth/status');registerMode=authInfo.setup_required;updateAuthMode();app.user=await api('/auth/me');await boot()}catch(e){showAuth();if(e.message!=='Accedi per continuare')$('#auth-error').textContent=''}}
+async function boot(){resetActivityLogs();latestRun=null;latestRunWorkflow='';++latestRunRequest;app.user=await api('/auth/me');app.settings=await api('/settings');app.workflows=await api('/workflows');await loadWorkflowTopics();await ragRefresh();await a2aRefresh();app.runs=await api('/runs');await refreshSchedules();$('#auth').hidden=true;$('#app').hidden=false;$('#account').textContent=app.user.email[0].toUpperCase();$('#account').dataset.tip=app.user.email;$('#footer-info').textContent=app.user.isolated?'Workspace personali isolati · Sessioni persistenti':'Modalità sviluppo · Isolamento dei file non attivo';workflowOptions();selectWorkflow(pendingDraftId()||workflowOrganization.recent[0]);showAgentSetupNotice();}
+const agentSetupNoticeStorageKey='rightcommit.hideAgentSetupNotice';
+function agentSetupNoticeHidden(){try{return localStorage.getItem(agentSetupNoticeStorageKey)==='true'}catch{return false}}
+function setAgentSetupNoticeHidden(hidden){try{localStorage.setItem(agentSetupNoticeStorageKey,String(hidden));return true}catch{toast('Impossibile salvare la preferenza in questo browser.');return false}}
+function showAgentSetupNotice(){
+ if(agentSetupNoticeHidden())return;
+ if(['codex','claude','pi'].some(runtime=>app.settings.agents?.[runtime]?.configured))return;
+ modal('Nessun agente configurato',`<div class="agent-setup-notice" data-agent-setup-notice><span class="agent-setup-icon" aria-hidden="true">${icon('bot-off')}</span><p>Non ci sono agenti configurati. Apri le configurazioni personali per configurare un agente e iniziare a eseguire i workflow.</p><label class="agent-setup-dismiss"><span>Non visualizzare più</span><jui-switch data-agent-setup-dismiss aria-label="Non visualizzare più"></jui-switch></label></div>`,'<button type="button" data-action="close-dialog">Chiudi</button><button type="button" class="primary" data-action="configure-agents" autofocus>Apri configurazioni personali</button>');
+ const preference=$('[data-agent-setup-dismiss]');
+ preference.addEventListener('change',()=>{if(!setAgentSetupNoticeHidden(preference.checked))preference.checked=agentSetupNoticeHidden()});
+}
 function orderedWorkflows(){return app.workflows.map((w,index)=>({w,index})).sort((a,b)=>(b.w.created||0)-(a.w.created||0)||a.index-b.index).map(x=>x.w)}
 let workflowOrganization={topics:[{id:'unassigned',name:'Unassigned'}],assignments:{},recent:[]};
 let topicRequest=Promise.resolve();
@@ -154,7 +226,7 @@ async function showWorkflowList(topicFilter=''){
  try{
  await topicRequest.catch(()=>{});app.workflows=await api('/workflows');await loadWorkflowTopics();await ragRefresh();workflowOptions();
  let selected=new Set(),busy=false;
- modal('Elenco workflow',`<div class="workflow-list"><div class="workflow-list-toolbar"><label class="workflow-search">Cerca workflow<input type="search" id="workflow-search" placeholder="Cerca per nome…" autocomplete="off"></label><button type="button" id="manage-topics-toggle" aria-expanded="false" aria-controls="workflow-topic-settings">${icon('settings-2')}Gestisci topic</button></div><section id="workflow-topic-settings" hidden><form id="create-topic-form"><label>Nuovo topic<input id="new-topic-name" required maxlength="80" autocomplete="off"></label><button type="submit">${icon('plus')}Crea topic</button></form><div id="topic-management-rows"></div><p class="small">I primi cinque topic sono visibili nel selettore. Il topic dell’ultimo workflow usato viene mostrato per primo automaticamente.</p></section><nav id="workflow-topic-filters" aria-label="Filtra per topic"></nav><div class="workflow-bulk" hidden><span id="workflow-selection-count" role="status"></span><div class="workflow-move-destination"><label for="workflow-topic-destination">Sposta in</label><jui-select id="workflow-topic-destination" aria-label="Sposta in"></jui-select></div><div class="workflow-bulk-actions"><button type="button" id="move-topic-workflows">${icon('move-right')}<span data-no-i18n>Move</span></button><button type="button" id="clear-workflow-selection">${icon('broom')}<span data-no-i18n>Clear</span></button></div></div><div class="workflow-list-heading"><jui-switch id="workflow-select-all" aria-label="Seleziona tutti i risultati"></jui-switch><span class="small" id="workflow-result-count" role="status" aria-live="polite"></span></div><div class="workflow-picker-table"><table><tbody id="workflow-picker-rows"></tbody></table></div><p class="note" id="workflow-picker-empty" hidden>Nessun workflow trovato.</p></div>`,'<button type="button" data-action="close-dialog">Chiudi</button>',true);
+ modal('Elenco workflow',`<div class="workflow-list"><div class="workflow-list-toolbar"><label class="workflow-search">Cerca workflow<input type="search" id="workflow-search" placeholder="Cerca per nome…" autocomplete="off"></label><button type="button" id="manage-topics-toggle" aria-expanded="false" aria-controls="workflow-topic-settings">${icon('settings-2')}Gestisci topic</button></div><section id="workflow-topic-settings" hidden><form id="create-topic-form"><label>Nuovo topic<input id="new-topic-name" required maxlength="80" autocomplete="off"></label><button type="submit">${icon('plus')}Crea topic</button></form><div id="topic-management-rows"></div><p class="small">I primi cinque topic sono visibili nel selettore. Il topic dell’ultimo workflow usato viene mostrato per primo automaticamente.</p></section><nav id="workflow-topic-filters" aria-label="Filtra per topic"></nav><div class="workflow-bulk" hidden><span id="workflow-selection-count" role="status"></span><div class="workflow-move-destination"><label for="workflow-topic-destination">Sposta in</label><jui-select id="workflow-topic-destination" aria-label="Sposta in"></jui-select></div><div class="workflow-bulk-actions"><button type="button" id="move-topic-workflows">${icon('move-right')}<span>Sposta</span></button><button type="button" id="clear-workflow-selection">${icon('broom')}<span>Deseleziona</span></button></div></div><div class="workflow-list-heading"><jui-switch id="workflow-select-all" aria-label="Seleziona tutti i risultati"></jui-switch><span class="small" id="workflow-result-count" role="status" aria-live="polite"></span></div><div class="workflow-picker-table"><table><tbody id="workflow-picker-rows"></tbody></table></div><p class="note" id="workflow-picker-empty" hidden>Nessun workflow trovato.</p></div>`,'<button type="button" data-action="close-dialog">Chiudi</button>',true);
  const search=$('#workflow-search'),filter={value:topicFilter};
  $('#manage-topics-toggle').onclick=()=>{const panel=$('#workflow-topic-settings');panel.hidden=!panel.hidden;$('#manage-topics-toggle').setAttribute('aria-expanded',String(!panel.hidden))};
  const options=()=>workflowOrganization.topics.map(t=>`<jui-option value="${esc(t.id)}" data-no-i18n>${esc(t.name)}</jui-option>`).join('');
@@ -237,7 +309,7 @@ async function showWorkflowCatalog(){
  try{
  const catalog=await api('/template-catalog');
  templateSections=catalog.sections.map(s=>({...s,...catalogText(s)}));
- workflowTemplates=catalog.templates.map(t=>({...t,setup:catalogText(t).setup,workflow:{...t.workflow,name:catalogText(t).title,description:catalogText(t).description}}));
+ workflowTemplates=catalog.templates.map(t=>({...t,setup:catalogText(t).setup,workflow:catalogWorkflow(t)}));
  modal('Nuovo workflow',`<div class="workflow-catalog"><section class="catalog-empty"><div><h3>Parti da zero</h3><p>Crea un workflow vuoto e scegli il nome.</p></div><button type="button" class="primary" data-action="empty-workflow">${icon('plus')}Crea workflow vuoto</button></section><section class="catalog-empty"><div><h3>Importa workflow</h3><p>Carica un workflow da un file JSON.</p></div><button type="button" data-action="import-workflow">${icon('upload')}Importa workflow</button></section><div class="catalog-templates"><p class="catalog-intro">Oppure scegli un modello: potrai confermare o modificare il nome della tua copia personale.</p>${templateSections.map(section=>`<section class="catalog-section" aria-labelledby="catalog-${section.id}"><h3 data-no-i18n id="catalog-${section.id}">${esc(section.title)}</h3><p data-no-i18n class="catalog-section-description">${esc(section.description)}</p><div class="template-grid">${workflowTemplates.filter(t=>t.section===section.id).map(t=>`<button type="button" class="template-card" data-action="create-template" data-template-id="${esc(t.id)}">${templatePreview(t)}<strong data-no-i18n>${esc(t.workflow.name)}</strong><span data-no-i18n class="template-description">${esc(t.workflow.description)}</span><span class="template-services">${t.services.length?t.services.map(service=>`<span data-no-i18n>${esc(service)}</span>`).join(''):'<span>Locale</span>'}</span><span data-no-i18n class="template-setup">${esc(t.setup)}</span><span class="template-card-action">Crea workflow <span aria-hidden="true">→</span></span></button>`).join('')}</div></section>`).join('')}</div></div>`,'',true);
  }catch(e){toast(e.message)}
 }
@@ -275,9 +347,9 @@ function updateViewContext(){
  if(!app.wf)return;
  const mode=app.run?'run':'design',context=$('#view-context');
  context.dataset.mode=mode;document.body.dataset.workspaceMode=mode;
- $('#workspace-mode').textContent=app.run?'Esecuzione in corso · '+app.run.id.slice(0,8):'Progettazione in corso';
+ $('#workspace-mode').textContent=app.run?uiText('Esecuzione in corso')+' · '+app.run.id.slice(0,8):uiText('Progettazione in corso');
  context.title=app.run?app.run.id:app.editBase?.id||'';
- if(app.editBase)$('#workspace-mode').textContent='Progettazione in corso · '+app.editBase.id.slice(0,8);
+ if(app.editBase)$('#workspace-mode').textContent=uiText('Progettazione in corso')+' · '+app.editBase.id.slice(0,8);
  $('#edit-continue').hidden=!app.run;$('#edit-continue').disabled=!!app.run?.parent||editingRun;$('#revision-preview').hidden=!app.editBase;$('#revision-cancel').hidden=!app.editBase;$('#execute').innerHTML=icon(app.editBase?'git-compare-arrows':'play')+esc(uiText(app.editBase?'Anteprima ripartenza':'Esegui workflow'));
  updateAutosaveStatus();
  $('#run-status').hidden=!app.run&&!app.editBase;
@@ -635,16 +707,16 @@ function renderList(){
   $('#execution-list').innerHTML=(app.run?.error?`<p class="error" role="alert">${esc(app.run.error)}</p>`:'')+(!app.run?'<p class="note">Avvia il workflow per osservare agenti, sessioni e avanzamento reali.</p>':'')+filters+`<div id="step-results">${visible.length?rows:empty}</div>`;
   if(focusedFilter)$('#execution-list .list-filter[data-filter="'+focusedFilter+'"]').focus({preventScroll:true});
 }
-function renderHistory(){const workflow=currentWorkflow(),runs=app.runs.filter(r=>r.workflow_id===workflow.id);$('#run-history').innerHTML='<h2 class="phase-title">Esecuzioni persistenti</h2>'+`<p class="small" data-no-i18n>${esc(workflow.name)}</p>`+(!runs.length?'<p class="note">Nessuna esecuzione per questo workflow.</p>':'')+runs.map(r=>`<button class="history-row" data-action="load-run" data-id="${r.id}">${icon(r.parent?'git-branch':'workflow')}<span><span data-no-i18n>${esc(r.name)}</span>${r.parent?`<small>Workflow principale · <span data-no-i18n>${esc(r.parent.run.slice(0,8))}</span></small>`:''}<small class="code"> · ${r.id.slice(0,8)} · ${new Date(r.created*1000).toLocaleString(nodoLocale())}</small></span><span class="status-label">${esc(states[r.status]||r.status)}</span></button>`).join('')}
+function renderHistory(){const workflow=currentWorkflow(),runs=app.runs.filter(r=>r.workflow_id===workflow.id&&!(app.schedules||[]).some(s=>s.schedule.id===r.schedule_id));$('#run-history').innerHTML=(typeof scheduleRows==='function'?scheduleRows(workflow.id):'')+'<h2 class="phase-title">Esecuzioni persistenti</h2>'+`<p class="small" data-no-i18n>${esc(workflow.name)}</p>`+(!runs.length?'<p class="note">Nessuna esecuzione per questo workflow.</p>':'')+runs.map(r=>`<button class="history-row" data-action="load-run" data-id="${r.id}">${icon(r.parent?'git-branch':'workflow')}<span><span data-no-i18n>${esc(r.name)}</span>${r.parent?`<small>Workflow principale · <span data-no-i18n>${esc(r.parent.run.slice(0,8))}</span></small>`:''}<small class="code"> · ${r.id.slice(0,8)} · ${new Date(r.created*1000).toLocaleString(nodoLocale())}</small></span><span class="status-label">${esc(states[r.status]||r.status)}</span></button>`).join('')}
 async function showExecutions(){
  const owner=app.user?.id;
  modal('Registro esecuzioni','<p id="executions-loading" role="status">Caricamento esecuzioni…</p>');
  try{
-  const runs=await api('/runs');
+  const [runs]=await Promise.all([api('/runs'),refreshSchedules()]);
   if(app.user?.id!==owner||$('#app').hidden||!$('#dialog').open||!$('#executions-loading'))return;
-  const ordered=[...runs].sort((a,b)=>b.created-a.created);
+  const ordered=runs.filter(r=>!(app.schedules||[]).some(s=>s.schedule.id===r.schedule_id)).sort((a,b)=>b.created-a.created);
   const statusOptions=[...new Set(ordered.map(r=>r.status))];
-  modal('Registro esecuzioni',`<div class="form-grid"><label>Cerca workflow<input type="search" id="executions-search" placeholder="Cerca per nome…" autocomplete="off"></label><label>Stato dell’esecuzione<jui-select id="executions-status"><jui-option value="">Tutti gli stati</jui-option>${statusOptions.map(status=>`<jui-option value="${esc(status)}">${esc(uiText(states[status]||status))}</jui-option>`).join('')}</jui-select></label></div><p class="small">Dal più recente al meno recente</p><p class="small" id="executions-count" role="status" aria-live="polite"></p><div id="executions-rows"></div>`,'<button type="button" data-action="close-dialog">Chiudi</button>',true);
+  modal('Registro esecuzioni',`<div id="executions-schedules">${scheduleRows()}</div><div class="form-grid"><label>Cerca workflow<input type="search" id="executions-search" placeholder="Cerca per nome…" autocomplete="off"></label><label>Stato dell’esecuzione<jui-select id="executions-status"><jui-option value="">Tutti gli stati</jui-option>${statusOptions.map(status=>`<jui-option value="${esc(status)}">${esc(uiText(states[status]||status))}</jui-option>`).join('')}</jui-select></label></div><p class="small">Dal più recente al meno recente</p><p class="small" id="executions-count" role="status" aria-live="polite"></p><div id="executions-rows"></div>`,'<button type="button" data-action="close-dialog">Chiudi</button>',true);
   const search=$('#executions-search'),status=$('#executions-status');
   const refresh=()=>{
    const term=search.value.trim().toLocaleLowerCase(nodoLocale());
@@ -672,9 +744,9 @@ $('#latest-run').onclick=async()=>{
   if(await loadRun(latest.id,workflow)){app.dirty=false;$('#dirty').hidden=true}
  }catch(e){toast(e.message)}finally{openingLatestRun=false;updateViewContext()}
 };
-async function refreshHistory(){const id=currentWorkflow().id;const runs=await api('/runs?workflow_id='+encodeURIComponent(id));if(currentWorkflow().id!==id)return;app.runs=runs;renderHistory()}
-function input(label,name,value,type='text',placeholder=''){return `<label>${label}<input name="${name}" type="${type}" value="${esc(value)}"${placeholder?` placeholder="${esc(placeholder)}"`:''}></label>`}
-function select(label,name,value,options){if(value!==''&&value!=null&&!options.some(o=>(Array.isArray(o)?o[0]:o)===value))options=[[value,String(value)+' · '+uiText('Non disponibile')],...options];return `<label>${label}<jui-select name="${name}">${options.map(o=>{const v=Array.isArray(o)?o[0]:o,t=Array.isArray(o)?o[1]:o;return `<jui-option ${['agent','target','base_run','workflow_id','mcp_id'].includes(name)&&v?'data-no-i18n':''} value="${esc(v)}" ${v===value?'selected':''}>${esc(t)}</jui-option>`}).join('')}</jui-select></label>`}
+async function refreshHistory(){const id=currentWorkflow().id;const [runs]=await Promise.all([api('/runs?workflow_id='+encodeURIComponent(id)),refreshSchedules()]);if(currentWorkflow().id!==id)return;app.runs=runs;renderHistory()}
+function input(label,name,value,type='text',placeholder=''){return `<label>${label}<input name="${name}" autocomplete="${type==='password'?'new-password':'off'}" ${type==='password'?'data-lpignore="true" data-1p-ignore="true" data-bwignore="true"':''} type="${type}" value="${esc(value)}"${placeholder?` placeholder="${esc(placeholder)}"`:''}></label>`}
+function select(label,name,value,options){if(value!==''&&value!=null&&!options.some(o=>(Array.isArray(o)?o[0]:o)===value))options=[[value,String(value)+' · '+uiText('Non disponibile')],...options];return `<label>${label}<jui-select name="${name}">${options.map(o=>{if(o===null)return '<jui-separator></jui-separator>';const v=Array.isArray(o)?o[0]:o,t=Array.isArray(o)?o[1]:o;return `<jui-option ${['agent','target','base_run','workflow_id','mcp_id','api_endpoint'].includes(name)&&v?'data-no-i18n':''} value="${esc(v)}" ${v===value?'selected':''}>${esc(t)}</jui-option>`}).join('')}</jui-select></label>`}
 function sourceModeFields(n){return `<div id="source-mode-fields" ${n.source_type==='folder'?'':'hidden'}>${select('Gestione sorgente','source_mode',n.source_mode||'copy',[['direct','Modifica sorgente permanentemente'],['copy','Crea una copia della sorgente']])}<p class="note">${uiText("La modalità permanente salva le modifiche direttamente in /sources. La copia usa un workspace separato; limite per file:")} ${app.settings.source_copy_limit_mib??10} MiB.</p></div>`}
 async function confirmSourceCopy(n,onConfirmedLarge=()=>{}){
  const d=await api('/storage/source-size?path='+encodeURIComponent(n.location||'.'));
@@ -720,27 +792,37 @@ async function loadSourceFolderOptions(form){
  }
 }
 const artifactSearch={scope:null,value:''};
+let artifactShowHidden=false;
 function artifactKey(a){return a.file?.change==='report'?'report:'+a.node:a.file?.location||a.path}
 function artifactTime(a){return a.file?.modified||a.created*1000||0}
 function artifactDate(a){const time=artifactTime(a);return time?new Date(time).toLocaleString(nodoLocale(),{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}):'—'}
 function artifactRoot(a){return a.file?.root||(app.run?.context?.['direct-primary']?'/sources':'/data')}
+const artifactCacheDirectories=new Set(['node_modules','__pycache__','.pytest_cache','.mypy_cache','.ruff_cache','.cache','.hypothesis','.tox','.nox','.parcel-cache','.turbo','.sass-cache']);
+function artifactIsCache(a){
+ const parts=a.path.split(/[\\/]/),name=parts.at(-1);
+ return parts.some(part=>artifactCacheDirectories.has(part))||/\.py[co]$/i.test(name)||['.DS_Store','Thumbs.db'].includes(name);
+}
 function inspectorArtifacts(arts){
  const scope=app.user?.id+':'+app.run?.id;if(artifactSearch.scope!==scope){artifactSearch.scope=scope;artifactSearch.value=''}
- const latest=new Map();for(const a of arts){const key=artifactKey(a),old=latest.get(key);if(!old||a.version>=old.version)latest.set(key,a)}
+ const latest=new Map();for(const a of arts){if(artifactIsCache(a))continue;const key=artifactKey(a),old=latest.get(key);if(!old||a.version>=old.version)latest.set(key,a)}
  const all=[...latest.values()].sort((a,b)=>artifactTime(b)-artifactTime(a)||b.created-a.created||a.path.localeCompare(b.path)),reports=all.filter(a=>a.file?.change==='report'||(!a.file&&a.path.startsWith('.nodo/reports/'))),files=all.filter(a=>!reports.includes(a));
- const row=a=>`<button type="button" class="artifact-item" data-action="artifact" data-id="${esc(a.id)}" data-artifact-search="${esc(a.path.toLocaleLowerCase())}" data-tip="${esc(a.file?.location||a.path)}">${icon('file-text')}<span class="artifact-file"><span data-no-i18n>${esc(a.path)}</span><small>${uiText('Versione')} ${a.version}</small><time class="artifact-date" data-no-i18n datetime="${artifactTime(a)?new Date(artifactTime(a)).toISOString():''}" title="${esc(uiText(a.file?.change==='legacy'?'Data della versione salvata':'Ultima modifica del file'))}">${esc(artifactDate(a))}</time></span><span class="artifact-origin" data-no-i18n>${artifactRoot(a).slice(1)}</span></button>`;
- return `<div class="inspector-artifacts-heading"><span class="eyebrow" data-artifact-count>ARTEFATTI · ${files.length}</span><span class="small">${uiText('Tutta la run')}</span></div><input type="search" class="artifact-search" data-artifact-query value="${esc(artifactSearch.value)}" placeholder="${esc(uiText('Cerca artefatti…'))}" aria-label="${esc(uiText('Cerca artefatti'))}"><div data-inspector-artifacts>${files.map(row).join('')}<p class="note" data-artifact-empty>${uiText(files.length?'Nessun artefatto corrispondente.':'I file creati o modificati nella run appariranno qui.')}</p>${reports.length?`<details class="artifact-reports"><summary>${uiText('Report')} · ${reports.length}</summary>${reports.map(row).join('')}</details>`:''}</div>`;
+ const row=a=>`<button type="button" class="artifact-item" data-action="artifact" data-id="${esc(a.id)}" data-artifact-hidden="${a.path.split(/[\\/]/).some(part=>part.startsWith('.')&&part!=='.'&&part!=='..')}" data-artifact-search="${esc(a.path.toLocaleLowerCase())}" data-tip="${esc(a.file?.location||a.path)}">${icon('file-text')}<span class="artifact-file"><span data-no-i18n>${esc(a.path)}</span><small>${uiText('Versione')} ${a.version}</small><time class="artifact-date" data-no-i18n datetime="${artifactTime(a)?new Date(artifactTime(a)).toISOString():''}" title="${esc(uiText(a.file?.change==='legacy'?'Data della versione salvata':'Ultima modifica del file'))}">${esc(artifactDate(a))}</time></span><span class="artifact-origin" data-no-i18n>${artifactRoot(a).slice(1)}</span></button>`;
+ return `<div class="inspector-artifacts-heading"><span class="eyebrow" data-artifact-count>ARTEFATTI · ${files.length}</span><span class="small">${uiText('Tutta la run')}</span></div><input type="search" class="artifact-search" data-artifact-query value="${esc(artifactSearch.value)}" placeholder="${esc(uiText('Cerca artefatti…'))}" aria-label="${esc(uiText('Cerca artefatti'))}"><div class="storage-hidden-control artifact-hidden-control"><span id="artifact-hidden-label">Mostra nascosti</span><button type="button" role="switch" class="storage-hidden-toggle" data-artifact-show-hidden aria-checked="${artifactShowHidden}" aria-labelledby="artifact-hidden-label"><span aria-hidden="true"></span></button></div><div data-inspector-artifacts>${files.map(row).join('')}<p class="note" data-artifact-empty>${uiText(files.length?'Nessun artefatto corrispondente.':'I file creati o modificati nella run appariranno qui.')}</p>${reports.length?`<details class="artifact-reports"><summary>${uiText('Report')} · ${reports.length}</summary>${reports.map(row).join('')}</details>`:''}</div>`;
 }
 function bindArtifactSearch(){
  const input=$('[data-artifact-query]');if(!input)return;
- const apply=()=>{const query=input.value.toLocaleLowerCase().trim();artifactSearch.value=input.value;const rows=$$('[data-artifact-search]',$('#inspector'));rows.forEach(row=>row.hidden=!row.dataset.artifactSearch.includes(query));const files=rows.filter(row=>!row.closest('.artifact-reports')),visible=files.filter(row=>!row.hidden).length;const count=$('[data-artifact-count]');if(count)count.textContent=uiText('ARTEFATTI · '+visible);const empty=$('[data-artifact-empty]');if(empty)empty.hidden=visible>0;const reports=$('.artifact-reports');if(reports)reports.hidden=!rows.some(row=>row.closest('.artifact-reports')&&!row.hidden)};
+ const apply=()=>{const query=input.value.toLocaleLowerCase().trim();artifactSearch.value=input.value;const rows=$$('[data-artifact-search]',$('#artifacts-panel'));rows.forEach(row=>row.hidden=(!artifactShowHidden&&row.dataset.artifactHidden==='true')||!row.dataset.artifactSearch.includes(query));const files=rows.filter(row=>!row.closest('.artifact-reports')),visible=files.filter(row=>!row.hidden).length;const count=$('[data-artifact-count]');if(count)count.textContent=uiText('ARTEFATTI · '+visible);const empty=$('[data-artifact-empty]');if(empty)empty.hidden=visible>0;const reports=$('.artifact-reports');if(reports)reports.hidden=!rows.some(row=>row.closest('.artifact-reports')&&!row.hidden)};
+ const toggle=$('[data-artifact-show-hidden]');if(toggle)toggle.onclick=()=>{artifactShowHidden=!artifactShowHidden;toggle.setAttribute('aria-checked',String(artifactShowHidden));apply()};
  input.oninput=apply;apply();
 }
 function renderInspector(){
  const artifactInput=$('[data-artifact-query]'),artifactFocus=artifactInput===document.activeElement,artifactSelection=artifactInput?.selectionStart,artifactScroll=$('[data-inspector-artifacts]')?.scrollTop||0;
  const selected=selectedNodeIds();
+ const artifactNode=currentWorkflow().nodes.find(n=>n.id===app.selected),stackVisible=(!app.run&&selected.length>1)||!!(artifactNode&&artifactNode.kind!=='Comment');
+ $('#inspector-stack').hidden=!stackVisible;
+ $('#artifacts-panel').innerHTML=stackVisible?inspectorArtifacts(app.artifacts):'';if(stackVisible)bindArtifactSearch();
  if(!app.run&&selected.length>1){$('#inspector').hidden=false;$('#inspector').innerHTML=`<div class="panel-heading">${icon('workflow')}<b>${selected.length} ${esc(uiText('nodi selezionati'))}</b><div class="spacer"></div><button type="button" class="icon-button" data-action="clear-node-selection" aria-label="${esc(uiText('Deseleziona'))}">${icon('x')}</button></div><p class="note">Trascina uno dei nodi selezionati per spostare il gruppo. Shift + clic aggiunge o rimuove un nodo.</p><button type="button" class="danger" data-action="delete-selected-nodes">${icon('trash-2')}${esc(uiText('Cancella selezione'))}</button>`;return}
- const n=currentWorkflow().nodes.find(n=>n.id===app.selected);$('#inspector').hidden=!n||n.kind==='Comment';if(!n||n.kind==='Comment'){$('#inspector').replaceChildren();return}let fields=input('Nome','title',n.title)+input('Fase','phase',n.phase||'Workflow');const agents=currentWorkflow().nodes.filter(n=>n.kind==='Agent').map(n=>[n.id,n.title]);if(n.kind==='A2A')fields+=select('Agente remoto','a2a_id',n.a2a_id||'',[['','Seleziona connessione'],...a2aConnections.map(c=>[c.id,c.name])])+`<label>Richiesta<textarea name="prompt" rows="6">${esc(n.prompt||'')}</textarea></label><button type="button" data-action="a2a-connections">Connessioni A2A</button><button type="button" data-action="a2a-probe">Verifica Agent Card</button><p class="note">Invia richiesta, input della run e contesto a monte. I chiarimenti riprendono lo stesso task remoto.</p>`;if(n.kind==='Agent')fields+=select('Runtime','runtime',n.runtime||'', [['','Preferenza personale'],['codex','Codex'],['claude','Claude Code'],['pi','Pi Agent']])+input('Modello (vuoto = configurazione personale)','model',n.model||'');if(['Task','Gate'].includes(n.kind)||n.kind==='Review')fields+=select('Agent','agent',n.agent||'', [['','Seleziona Agent'],...agents]);if(n.kind==='Task')fields+=input('Skill Spec Kit (es. implement)','command',n.command||'');if(['Task','Gate','Review'].includes(n.kind))fields+=`<label>Prompt / criteri<textarea name="prompt" rows="7">${esc(n.prompt)}</textarea></label>`;if(n.kind==='Gate')fields+=input('Esiti separati da virgola','outcomes',(n.outcomes||[]).join(', '))+input('Limite rework','max_rework',n.max_rework??2,'number')+select('Richiede test deterministici','require_tests',String(!!n.require_tests),[['false','No'],['true','Sì']]);if(n.kind==='Gate')fields+=select('Verifica chiusura task','require_tasks_closed',String(!!n.require_tasks_closed),[['false','No'],['true','Sì']])+input('Percorso tasks.md (vuoto = feature unica)','location',n.location||'');if(n.kind==='Review')fields+=select('Review','mode',n.mode||'agent_and_human',[['human','Umana'],['agent','Agente in contesto separato'],['agent_and_human','Agente + approvazione umana']])+input('Limite rework','max_rework',n.max_rework??2,'number');if(n.kind==='Source')fields+=select('Tipo Source','source_type',n.source_type||'example',[['example','Repository precaricato'],['folder','Folder in /sources'],['examples','Folder in examples'],['git','Repository Git HTTPS']])+sourcePathField(n)+sourceModeFields(n)+`<button type="button" data-action="browse-source">${icon('folder-git-2')}Sfoglia Storage</button>`;if(n.kind==='Memory')fields+=select('Task sorgente','agent',n.agent||'',[['','Seleziona Task'],...currentWorkflow().nodes.filter(n=>n.kind==='Task').map(n=>[n.id,n.title])])+select('Agent destinatario','target',n.target||'',[['','Seleziona Agent'],...agents]);if(n.kind==='Connection')fields+=select('Provider','provider',n.provider||'local',[['local','Git / CI locali'],['github','GitHub'],['azure','Azure DevOps'],['servicenow','ServiceNow'],['atlassian','Atlassian Teamwork Graph CLI']])+`<div id="connection-fields">${connectionFields(n)}</div>`;if(n.kind==='RAG')fields+=select('Cartella indicizzata','rag_index',n.rag_index||'',[['','Seleziona indice RAG'],...ragCatalog.filter(i=>i.directory&&i.generation).map(i=>[i.id,i.name+' · '+i.root+'/'+i.path])])+select('Modalità di ricerca','rag_mode',n.rag_mode||'',[['','Configurazione indice'],['hybrid','Hybrid'],['semantic','Semantic'],['keyword','Keyword']])+input('Risultati per ricerca','rag_top_k',n.rag_top_k??8,'number')+`<button type="button" data-action="rag-node-manage">${icon('database-rag')}Gestisci indice</button><p class="note">Collega questo nodo a un Agent con un arco context. Ricerca, stato, elenco documenti e lettura chunk si aggiungono ai tool nativi. L’indice descrive la sorgente, non le modifiche successive nel workspace.</p>`;if(n.kind==='MCP')fields+=select('Server MCP personale','mcp_id',n.mcp_id||'',[['','Seleziona server MCP'],...Object.entries(app.settings.mcp_servers||{}).map(([id,c])=>[id,c.name||id])])+`<label>Tool consentiti (vuoto = tutti)<textarea name="mcp_tools" rows="4">${esc((n.mcp_tools||[]).join('\n'))}</textarea></label><div class="actions"><button type="button" data-action="mcp-node-probe">${icon('list-checks')}Scopri e seleziona tool</button><button type="button" data-action="mcp-settings">${icon('settings-2')}Server MCP personali</button></div><p class="note">Collega la porta di uscita a un Agent con un arco context. I tool nativi restano disponibili.</p>`;if(n.kind==='Workflow')fields+=select('Workflow da richiamare','workflow_id',n.workflow_id||'',[['','Seleziona workflow'],...app.workflows.filter(w=>w.id!==currentWorkflow().id).map(w=>[w.id,w.name])])+`<label>Contesto da passare<textarea name="prompt" rows="5">${esc(n.prompt||'')}</textarea></label><p class="note">Sessioni separate. Workspace ereditato dal chiamante; i Source del figlio non vengono ricopiati. Il padre attende il completamento.</p>`;if(n.kind==='Fork')fields+=select('Nodo di ricongiungimento','target',n.target||'',[['','Seleziona Join'],...currentWorkflow().nodes.filter(j=>j.kind==='Join').map(j=>[j.id,j.title])])+`<p class="note">Collega almeno due rami di Task, ciascuno con un Agent distinto. Tutti i rami devono terminare nel Join selezionato. Il piano del Task precedente viene passato automaticamente a ogni agente, senza Memory. Il workspace è condiviso: assegna file diversi ai rami.</p>`;if(n.kind==='Join')fields+=`<p class="note">Attende tutti i rami del Fork e trasferisce i risultati agli agenti dei Task successivi, senza Memory.</p>`;const arts=app.artifacts;const edges=currentWorkflow().edges.filter(e=>e.from===n.id||e.to===n.id);$('#inspector').innerHTML=`<div class="panel-heading">${nodeIcon(n)}<b>${esc(n.kind)}</b>${nodeService(n)?`<span class="small">${esc(nodeLabel(n))}</span>`:''}<div class="spacer"></div><button class="icon-button" data-action="close-inspector" aria-label="Chiudi dettagli">${icon('x')}</button></div>${app.run?`<p class="note">Run ${esc(app.run.id.slice(0,8))} · ${esc(states[state(n)])}<br>La configurazione del run è congelata.</p>`:''}<form id="node-form" data-workflow-id="${esc(currentWorkflow().id)}" data-node-id="${esc(n.id)}" class="inspector-form"><fieldset ${app.run?'disabled':''} style="border:0;margin:0;padding:0;display:grid;gap:15px">${fields}</fieldset><div class="actions">${!app.run?`<button type="button" class="icon-button" data-action="save-inspector" data-tip="Salva" aria-label="Salva">${icon('save')}</button><button type="button" data-action="set-entry" data-id="${n.id}" data-tip="Usa come ingresso" aria-label="Usa come ingresso">${icon('log-in')}</button><button type="button" class="danger" data-action="delete-node" data-id="${n.id}" aria-label="Elimina nodo">${icon('trash-2')}</button>`:''}${n.kind==='Review'||app.decisions.some(d=>d.node===n.id)?`<button type="button" data-action="review-history" data-id="${n.id}" data-tip="Storico review" aria-label="Storico review">${icon('history')}</button>`:''}</div></form>${n.kind==='Workflow'&&app.run?childCalls(n.id):''}${app.run?.pending?.node===n.id?'<div class="divider"></div><button data-action="pending" class="review-banner">Apri review o domanda</button>':''}<div class="divider"></div><span class="eyebrow">COLLEGAMENTI</span>${edges.map((e,i)=>`<div class="note code inspector-connection-row"><span>${esc(e.from)} → ${esc(e.to)} · ${esc(e.kind)} ${esc(e.outcome)}</span>${!app.run?`<button type="button" class="icon-button inspector-connection-delete" data-action="delete-edge" data-index="${currentWorkflow().edges.indexOf(e)}" aria-label="Rimuovi arco">${icon('x')}</button>`:''}</div>`).join('')}${!edges.length?'<p class="note">Usa le porte del nodo per collegarlo.</p>':''}<div class="divider"></div>${inspectorArtifacts(arts)}`;bindArtifactSearch();const artifactList=$('[data-inspector-artifacts]');if(artifactList)artifactList.scrollTop=artifactScroll;if(artifactFocus){const query=$('[data-artifact-query]');query?.focus({preventScroll:true});query?.setSelectionRange(artifactSelection,artifactSelection)}if(n.kind==='Source'){loadSourceFolderOptions($('#node-form'));if(app.editBase){for(const name of ['source_type','source_mode','location'])$('#node-form').elements[name].disabled=true;$('[data-source-folder-toggle]')?.setAttribute('hidden','');const browse=$('[data-action="browse-source"]');if(browse)browse.disabled=true;$('#source-folder-hint').hidden=false;$('#source-folder-hint').textContent=uiText('Le Source restano quelle della run originale. La ripartenza usa una copia dei file correnti.')}}}
+ const n=currentWorkflow().nodes.find(n=>n.id===app.selected);$('#inspector').hidden=!n||n.kind==='Comment';if(!n||n.kind==='Comment'){$('#inspector').replaceChildren();return}let fields=input('Nome','title',n.title)+input('Fase','phase',n.phase||'Workflow');const agents=currentWorkflow().nodes.filter(n=>n.kind==='Agent').map(n=>[n.id,n.title]);if(n.kind==='A2A')fields+=select('Agente remoto','a2a_id',n.a2a_id||'',[['','Seleziona connessione'],...a2aConnections.map(c=>[c.id,c.name])])+`<label>Richiesta<textarea name="prompt" rows="6">${esc(n.prompt||'')}</textarea></label><button type="button" data-action="a2a-connections">Connessioni A2A</button><button type="button" data-action="a2a-probe">Verifica Agent Card</button><p class="note">Invia richiesta, input della run e contesto a monte. I chiarimenti riprendono lo stesso task remoto.</p>`;if(n.kind==='Agent')fields+=select('Runtime','runtime',n.runtime||'', [['','Preferenza personale'],['codex','Codex'],['claude','Claude Code'],['pi','Pi Agent']])+piNodeFields(n)+input('Modello (vuoto = configurazione personale)','model',n.model||'');if(['Task','Gate'].includes(n.kind)||n.kind==='Review')fields+=select('Agent','agent',n.agent||'', [['','Seleziona Agent'],...agents]);if(n.kind==='Task')fields+=input('Skill Spec Kit (es. implement)','command',n.command||'');if(['Task','Gate','Review'].includes(n.kind))fields+=`<label>Prompt / criteri<textarea name="prompt" rows="7">${esc(n.prompt)}</textarea></label>`;if(n.kind==='Gate')fields+=input('Esiti separati da virgola','outcomes',(n.outcomes||[]).join(', '))+input('Limite rework','max_rework',n.max_rework??2,'number')+select('Richiede test deterministici','require_tests',String(!!n.require_tests),[['false','No'],['true','Sì']]);if(n.kind==='Gate')fields+=select('Verifica chiusura task','require_tasks_closed',String(!!n.require_tasks_closed),[['false','No'],['true','Sì']])+input('Percorso tasks.md (vuoto = feature unica)','location',n.location||'');if(n.kind==='Review')fields+=select('Review','mode',n.mode||'agent_and_human',[['human','Umana'],['agent','Agente in contesto separato'],['agent_and_human','Agente + approvazione umana']])+input('Limite rework','max_rework',n.max_rework??2,'number');if(n.kind==='Source')fields+=select('Tipo Source','source_type',n.source_type||'example',[['example','Repository precaricato'],['folder','Folder in /sources'],['examples','Folder in examples'],['git','Repository Git HTTPS']])+sourcePathField(n)+sourceModeFields(n)+`<button type="button" data-action="browse-source">${icon('folder-git-2')}Sfoglia Storage</button>`;if(n.kind==='Memory')fields+=select('Task sorgente','agent',n.agent||'',[['','Seleziona Task'],...currentWorkflow().nodes.filter(n=>n.kind==='Task').map(n=>[n.id,n.title])])+select('Agent destinatario','target',n.target||'',[['','Seleziona Agent'],...agents]);if(n.kind==='Connection')fields+=select('Provider','provider',n.provider||'local',[['local','Git / CI locali'],['github','GitHub'],['azure','Azure DevOps'],['servicenow','ServiceNow'],['atlassian','Bitbucket / Atlassian TWG']])+`<div id="connection-fields">${connectionFields(n)}</div>`;if(n.kind==='RAG')fields+=select('Cartella indicizzata','rag_index',n.rag_index||'',[['','Seleziona indice RAG'],...ragCatalog.filter(i=>i.directory&&i.generation).map(i=>[i.id,i.name+' · '+i.root+'/'+i.path])])+select('Modalità di ricerca','rag_mode',n.rag_mode||'',[['','Configurazione indice'],['hybrid','Hybrid'],['semantic','Semantic'],['keyword','Keyword']])+input('Risultati per ricerca','rag_top_k',n.rag_top_k??8,'number')+`<button type="button" data-action="rag-node-manage">${icon('database-rag')}Gestisci indice</button><p class="note">Collega questo nodo a un Agent con un arco context. Ricerca, stato, elenco documenti e lettura chunk si aggiungono ai tool nativi. L’indice descrive la sorgente, non le modifiche successive nel workspace.</p>`;if(n.kind==='MCP')fields+=select('Server MCP personale','mcp_id',n.mcp_id||'',[['','Seleziona server MCP'],...Object.entries(app.settings.mcp_servers||{}).map(([id,c])=>[id,c.name||id])])+`<label>Tool consentiti (vuoto = tutti)<textarea name="mcp_tools" rows="4">${esc((n.mcp_tools||[]).join('\n'))}</textarea></label><div class="actions"><button type="button" data-action="mcp-node-probe">${icon('list-checks')}Scopri e seleziona tool</button><button type="button" data-action="mcp-settings">${icon('settings-2')}Server MCP personali</button></div><p class="note">Collega la porta di uscita a un Agent con un arco context. I tool nativi restano disponibili.</p>`;if(n.kind==='Workflow')fields+=select('Workflow da richiamare','workflow_id',n.workflow_id||'',[['','Seleziona workflow'],...app.workflows.filter(w=>w.id!==currentWorkflow().id).map(w=>[w.id,w.name])])+`<label>Contesto da passare<textarea name="prompt" rows="5">${esc(n.prompt||'')}</textarea></label><p class="note">Sessioni separate. Workspace ereditato dal chiamante; i Source del figlio non vengono ricopiati. Il padre attende il completamento.</p>`;if(n.kind==='Fork')fields+=select('Nodo di ricongiungimento','target',n.target||'',[['','Seleziona Join'],...currentWorkflow().nodes.filter(j=>j.kind==='Join').map(j=>[j.id,j.title])])+`<p class="note">Collega almeno due rami di Task, ciascuno con un Agent distinto. Tutti i rami devono terminare nel Join selezionato. Il piano del Task precedente viene passato automaticamente a ogni agente, senza Memory. Il workspace è condiviso: assegna file diversi ai rami.</p>`;if(n.kind==='Join')fields+=`<p class="note">Attende tutti i rami del Fork e trasferisce i risultati agli agenti dei Task successivi, senza Memory.</p>`;const edges=currentWorkflow().edges.filter(e=>e.from===n.id||e.to===n.id);$('#inspector').innerHTML=`<div class="panel-heading">${nodeIcon(n)}<b>${esc(n.kind)}</b>${nodeService(n)?`<span class="small">${esc(nodeLabel(n))}</span>`:''}<div class="spacer"></div><button class="icon-button" data-action="close-inspector" aria-label="Chiudi dettagli">${icon('x')}</button></div>${app.run?`<p class="note">Run ${esc(app.run.id.slice(0,8))} · ${esc(states[state(n)])}<br>La configurazione del run è congelata.</p>`:''}<form id="node-form" data-workflow-id="${esc(currentWorkflow().id)}" data-node-id="${esc(n.id)}" class="inspector-form"><fieldset ${app.run?'disabled':''} style="border:0;margin:0;padding:0;display:grid;gap:15px">${fields}</fieldset><div class="actions">${!app.run?`<button type="button" class="icon-button" data-action="save-inspector" data-tip="Salva" aria-label="Salva">${icon('save')}</button><button type="button" data-action="set-entry" data-id="${n.id}" data-tip="Usa come ingresso" aria-label="Usa come ingresso">${icon('log-in')}</button><button type="button" class="danger" data-action="delete-node" data-id="${n.id}" aria-label="Elimina nodo">${icon('trash-2')}</button>`:''}${n.kind==='Review'||app.decisions.some(d=>d.node===n.id)?`<button type="button" data-action="review-history" data-id="${n.id}" data-tip="Storico review" aria-label="Storico review">${icon('history')}</button>`:''}</div></form>${n.kind==='Workflow'&&app.run?childCalls(n.id):''}${app.run?.pending?.node===n.id?'<div class="divider"></div><button data-action="pending" class="review-banner">Apri review o domanda</button>':''}<div class="divider"></div><span class="eyebrow">COLLEGAMENTI</span>${edges.map((e,i)=>`<div class="note code inspector-connection-row"><span>${esc(e.from)} → ${esc(e.to)} · ${esc(e.kind)} ${esc(e.outcome)}</span>${!app.run?`<button type="button" class="icon-button inspector-connection-delete" data-action="delete-edge" data-index="${currentWorkflow().edges.indexOf(e)}" aria-label="Rimuovi arco">${icon('x')}</button>`:''}</div>`).join('')}${!edges.length?'<p class="note">Usa le porte del nodo per collegarlo.</p>':''}`;const artifactList=$('[data-inspector-artifacts]');if(artifactList)artifactList.scrollTop=artifactScroll;if(artifactFocus){const query=$('[data-artifact-query]');query?.focus({preventScroll:true});query?.setSelectionRange(artifactSelection,artifactSelection)}if(n.kind==='Source'){loadSourceFolderOptions($('#node-form'));if(app.editBase){for(const name of ['source_type','source_mode','location'])$('#node-form').elements[name].disabled=true;$('[data-source-folder-toggle]')?.setAttribute('hidden','');const browse=$('[data-action="browse-source"]');if(browse)browse.disabled=true;$('#source-folder-hint').hidden=false;$('#source-folder-hint').textContent=uiText('Le Source restano quelle della run originale. La ripartenza usa una copia dei file correnti.')}}}
 function childCalls(node){const calls=app.children.filter(c=>c.node===node);if(!calls.length)return '';return `<details class="child-calls" ${app.run?.current===node?'open':''}><summary>${icon('workflow')}<span>Workflow collegati</span><b>${calls.length}</b></summary>${calls.map(c=>`<button type="button" class="child-run-link" data-action="load-run" data-id="${esc(c.id)}" data-status="${esc(c.status)}">${icon(['waiting_review','waiting_user'].includes(c.status)?'circle-help':'workflow')}<span><b data-no-i18n>${esc(c.name)}</b><small><span data-no-i18n>${esc(c.id.slice(0,8))}</span> · ${esc(states[c.status]||c.status)}</small></span>${icon('log-in')}</button>`).join('')}</details>`}
 function showRunFamily(){if(!app.run)return;modal('Workflow collegati',`<p class="note">Stesso workspace, sessioni native separate. Apri un’esecuzione per vedere grafo, review e artefatti.</p>${app.run.parent?`<button class="child-run-link" data-action="load-run" data-id="${esc(app.run.parent.run)}">${icon('arrow-left')}<span>Workflow principale<small data-no-i18n>${esc(app.run.parent.run.slice(0,8))}</small></span></button>`:''}${[...new Set(app.children.map(c=>c.node))].map(id=>`<h3 data-no-i18n>${esc(app.run.workflow.nodes.find(n=>n.id===id)?.title||id)}</h3>${childCalls(id)}`).join('')}`,'<button data-action="close-dialog">Chiudi</button>')}
 const activityLog={owner:null,generation:0,workflow:null,selected:null,page:0,timer:null,runs:new Map()};
@@ -753,15 +835,37 @@ function activityDetail(value){
  const chars=Array.from(text.replace(/\s+/g,' ').trim());
  return chars.slice(0,30).join('')+(chars.length>30?'…':'');
 }
-function activityMessage(event){
+function activityMessage(event,expanded=false){
  const data=activityData(event);
- if(event.kind==='compaction'&&data){const phase={start:'Compattazione avviata',end:'Compattazione completata',error:'Compattazione fallita'},mode={manual:'Manuale',auto:'Automatica',automatic:'Automatica',threshold:'Soglia automatica',overflow:'Contesto esaurito'};return `${uiText(phase[data.phase]||'Compattazione')} · ${data.runtime||''} · ${uiText(mode[data.mode]||data.mode||'Automatica')}${data.binding?' · '+data.binding:''}${data.tokens_before!=null?'\n'+uiText('Token prima')+': '+data.tokens_before:''}${data.tokens_after_estimate!=null?'\n'+uiText('Token dopo (stima)')+': '+data.tokens_after_estimate:''}${data.message?' · '+activityDetail(data.message):''}`}
- if(event.kind==='activity'&&data){const phase={start:'Avvio strumento',end:'Strumento completato',error:'Errore strumento',agent_start:'Agente avviato'};return `${uiText(phase[data.phase]||'Attività')} · ${data.runtime||''}${data.tool?' · '+data.tool:''}${data.detail?' · '+activityDetail(data.detail):''}${data.exit_code!=null?' · Exit: '+data.exit_code:''}`}
- if(event.kind==='output'){const match=event.text.match(/<nodo_result>([\s\S]*?)<\/nodo_result>/);if(match){try{const r=JSON.parse(match[1]);return [event.text.slice(0,match.index).trim(),r.summary,r.details].filter(Boolean).map(activityDetail).join(' · ')}catch{}}}
+ if(event.kind==='compaction'&&data){const phase={start:'Compattazione avviata',end:'Compattazione completata',error:'Compattazione fallita'},mode={manual:'Manuale',auto:'Automatica',automatic:'Automatica',threshold:'Soglia automatica',overflow:'Contesto esaurito'};return `${uiText(phase[data.phase]||'Compattazione')} · ${data.runtime||''} · ${uiText(mode[data.mode]||data.mode||'Automatica')}${data.binding?' · '+data.binding:''}${data.tokens_before!=null?'\n'+uiText('Token prima')+': '+data.tokens_before:''}${data.tokens_after_estimate!=null?'\n'+uiText('Token dopo (stima)')+': '+data.tokens_after_estimate:''}${data.message?' · '+data.message:''}`}
+ if(event.kind==='activity'&&data){const phase={start:'Avvio strumento',end:'Strumento completato',error:'Errore strumento',agent_start:'Agente avviato'};return `${uiText(phase[data.phase]||'Attività')} · ${data.runtime||''}${data.tool?' · '+data.tool:''}${data.detail?' · '+(expanded||data.phase==='error'?data.detail:activityDetail(data.detail)):''}${data.exit_code!=null?' · Exit: '+data.exit_code:''}`}
+ if(event.kind==='output'){const match=event.text.match(/<nodo_result>([\s\S]*?)<\/nodo_result>/);if(match){try{const r=JSON.parse(match[1]);return [event.text.slice(0,match.index).trim(),r.summary,r.details].filter(Boolean).join(' · ')}catch{}}}
  if(event.kind==='usage'&&data)return `${data.runtime||''} · ${data.model||''}\n${uiText('Token in ingresso')}: ${data.input??'—'} · ${uiText('Token in uscita')}: ${data.output??'—'}${data.usd!=null?' · USD '+Number(data.usd).toFixed(4):''}`;
  if(event.kind==='agent_turn'&&data)return `${data.runtime||''} · ${uiText('Turno agente terminato')}`;
  if(event.kind==='state')return uiText(states[event.text]||event.text);
- return activityDetail(event.text);
+ return String(event.text??'');
+}
+function activityPreview(event){
+ const message=activityMessage(event).replace(/\s+/g,' ').trim(),full=activityMessage(event,true).replace(/\s+/g,' ').trim();
+ const extended=message.length>240||String(event.text??'').length>240||message!==full;
+ return `<div class="activity-event-preview"><pre data-no-i18n>${esc(message.length>240?message.slice(0,240).trimEnd()+'…':message)}</pre>${extended?`<button type="button" class="activity-read" data-log-read="${esc(event.seq)}" aria-label="${esc(uiText('Leggi messaggio completo'))}">${uiText('Leggi')}</button>`:''}</div>`;
+}
+function readActivityEvent(runId,seq){
+ const entry=activityLog.runs.get(runId),event=entry&&[...entry.events.values()].find(e=>String(e.seq)===String(seq));if(!event)return;
+ const message=activityMessage(event,true),data=activityData(event),body=data!==null?JSON.stringify(data,null,2):String(event.text??'');
+ const section=(title,text,key)=>`<section><div class="activity-message-heading"><h3>${uiText(title)}</h3><button type="button" class="activity-copy" data-log-copy="${key}" aria-label="${esc(uiText(key==='message'?'Copia messaggio completo':'Copia corpo esteso'))}">${uiText('Copia')}</button></div><pre data-no-i18n>${esc(text)}</pre></section>`;
+ modal(uiText('Dettaglio messaggio'),`<div class="activity-message-dialog"><dl class="activity-message-meta"><div><dt>${uiText('Esecuzione')}</dt><dd data-no-i18n>${esc(entry.meta.name)} · ${esc(runId)}</dd></div><div><dt>${uiText('Nodo')}</dt><dd data-no-i18n>${esc(event.node||'run')}</dd></div><div><dt>${uiText('Data e ora')}</dt><dd data-no-i18n>${esc(new Date(event.created*1000).toLocaleString(nodoLocale()))}</dd></div></dl>${section('Messaggio completo',message,'message')}${body!==message?section('Corpo esteso',body,'body'):''}</div>`,`<button type="button" data-action="close-dialog">${uiText('Chiudi')}</button>`,true);
+ $$('[data-log-copy]',$('#dialog')).forEach(button=>button.onclick=async()=>{
+  const text=button.dataset.logCopy==='message'?message:body;
+  try{
+   if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(text);
+   else{
+    const field=document.createElement('textarea');field.value=text;field.readOnly=true;field.style.cssText='position:fixed;opacity:0;pointer-events:none';$('#dialog').append(field);
+    try{field.select();if(!document.execCommand('copy'))throw Error('copy failed')}finally{field.remove();button.focus({preventScroll:true})}
+   }
+   button.textContent=uiText('Copiato');
+  }catch{toast(uiText('Impossibile copiare il testo'))}
+ });
 }
 function activityCurrent(entry){
  const tools=new Map(),compacting=new Map();let agent='';
@@ -797,7 +901,7 @@ function renderActivityLog(){
   return `<button type="button" role="tab" id="activity-tab-${esc(r.id)}" data-log-run="${esc(r.id)}" aria-controls="activity-panel" aria-selected="${selected}" tabindex="${selected?0:-1}" class="${selected?'active':''}"><span class="activity-run-title" data-no-i18n>${esc(r.name)} · ${esc(r.id.slice(0,8))}</span><small data-no-i18n>${esc(new Date(r.created*1000).toLocaleString(nodoLocale()))} · ${esc(uiText(states[r.status]||r.status))}${app.run?.id===r.id?' · '+uiText('Live'):''}</small></button>`;
  }).join('')}</div><div id="activity-panel" data-log-owner="${esc(active.meta.id)}" class="activity-run-content" role="tabpanel" tabindex="0" aria-labelledby="activity-tab-${esc(active.meta.id)}">${(()=>{
   const entry=active,r=entry.meta,events=[...entry.events.values()].sort((a,b)=>b.seq-a.seq),current=activityCurrent(entry);
-  return `${current?`<p class="activity-current" data-no-i18n>${esc(uiText('In corso'))}: ${esc(current.replace(/\s+/g,' ').trim())}</p>`:''}${entry.error?`<p class="error">${esc(entry.error)}</p><button type="button" data-log-retry="${esc(r.id)}">${uiText('Riprova')}</button>`:''}${entry.loading?`<p class="note">${uiText('Caricamento…')}</p>`:''}${events.map(event=>{const kind={activity:'Strumenti',output:'Risposta agente',state:'Stato',error:'Errore',usage:'Consumi',agent_turn:'Turno agente',compaction:'Compattazione',restart:'Riavvio server'}[event.kind]||event.kind;const title=app.run?.id===r.id?app.run.workflow.nodes.find(n=>n.id===event.node)?.title:null;return `<article class="activity-event" data-log-seq="${event.seq}"><div class="activity-event-meta"><time data-no-i18n>${esc(new Date(event.created*1000).toLocaleTimeString(nodoLocale()))}</time> · <span data-no-i18n>${esc(title||event.node||'run')}</span> · <span>${esc(uiText(kind))}</span></div><pre data-no-i18n>${esc(activityMessage(event).replace(/\s+/g,' ').trim())}</pre></article>`}).join('')}${!events.length&&!entry.loading&&!entry.error?`<p class="note">${uiText('Nessun messaggio disponibile.')}</p>`:''}`;
+  return `${current?`<p class="activity-current" data-no-i18n>${esc(uiText('In corso'))}: ${esc(current.replace(/\s+/g,' ').trim())}</p>`:''}${entry.error?`<p class="error">${esc(entry.error)}</p><button type="button" data-log-retry="${esc(r.id)}">${uiText('Riprova')}</button>`:''}${entry.loading?`<p class="note">${uiText('Caricamento…')}</p>`:''}${events.map(event=>{const kind={activity:'Strumenti',output:'Risposta agente',state:'Stato',error:'Errore',usage:'Consumi',agent_turn:'Turno agente',compaction:'Compattazione',restart:'Riavvio server'}[event.kind]||event.kind;const title=app.run?.id===r.id?app.run.workflow.nodes.find(n=>n.id===event.node)?.title:null;return `<article class="activity-event" data-log-seq="${event.seq}"><div class="activity-event-meta"><time data-no-i18n>${esc(new Date(event.created*1000).toLocaleTimeString(nodoLocale()))}</time> · <span data-no-i18n>${esc(title||event.node||'run')}</span> · <span>${esc(uiText(kind))}</span></div>${activityPreview(event)}</article>`}).join('')}${!events.length&&!entry.loading&&!entry.error?`<p class="note">${uiText('Nessun messaggio disponibile.')}</p>`:''}`;
  })()}</div>`:`<p class="note">${uiText('Nessuna esecuzione per questo workflow.')}</p>`;
  const content=$('#activity-panel',panel);if(content){content.scrollTop=active.scroll+(sameRun&&active.scroll>0?Math.max(0,content.scrollHeight-oldHeight):0);content.onscroll=()=>{active.scroll=content.scrollTop}}
  const tabs=$$('[data-log-run]',panel);
@@ -807,6 +911,7 @@ function renderActivityLog(){
  tabs.forEach((tab,i)=>{tab.onclick=()=>activate(tab);tab.onkeydown=e=>{let next;if(e.key==='ArrowRight')next=(i+1)%tabs.length;else if(e.key==='ArrowLeft')next=(i+tabs.length-1)%tabs.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=tabs.length-1;else return;e.preventDefault();activate(tabs[next])}});
  $$('[data-log-page]',panel).forEach(button=>button.onclick=()=>{const index=(activityLog.page+Number(button.dataset.logPage))*pageSize;activityLog.selected=entries[index].meta.id;renderActivityLog();loadActivityEvents(activityLog.selected)});
  $$('[data-log-retry]',panel).forEach(button=>button.onclick=()=>loadActivityEvents(button.dataset.logRetry));
+ $$('[data-log-read]',panel).forEach(button=>button.onclick=()=>readActivityEvent(active.meta.id,button.dataset.logRead));
 }
 
 async function loadActivityEvents(id){
@@ -829,26 +934,84 @@ const serviceInfo={
   codex:{name:'Codex',icon:'brand-openai',description:'Sviluppo con sessioni persistenti'},
   claude:{name:'Claude Code',icon:'brand-claude',description:'Il tuo agente di sviluppo Anthropic'},
   pi:{name:'Pi Agent',icon:'brand-pi',description:'Agente di sviluppo multi-provider'},
-  atlassian:{name:'Atlassian Teamwork Graph CLI',icon:'plug',description:'Jira, Confluence, Bitbucket e altri prodotti Atlassian'},
+  atlassian:{name:'Bitbucket / Atlassian TWG',icon:'brand-bitbucket',description:'Jira, Confluence, Bitbucket e altri prodotti Atlassian'},
   github:{name:'GitHub',icon:'brand-github',description:'Issue, repository e pull request'},
   azure:{name:'Azure DevOps',icon:'brand-azuredevops',description:'Work item, progetti e pull request'},
   servicenow:{name:'ServiceNow',icon:'brand-servicenow',description:'Incident e aggiornamenti operativi'}
 };
-function connectionFields(n){
- if(n.provider==='atlassian')return `<input type="hidden" name="operation" value="twg"><label>Argomenti TWG (JSON)<textarea name="command" rows="6" placeholder='["jira","workitem","get","ABC-123"]'>${esc(n.command||'')}</textarea></label><p class="note">Usa i comandi di Jira, Confluence, Bitbucket e degli altri prodotti TWG. Il workflow richiede conferma prima di eseguire il comando.</p><button type="button" data-action="twg-setup">${icon('plug')}Configura accesso Atlassian</button>`;
- return select('Operazione','operation',n.operation==='twg'?'read_ticket':n.operation||'test',['read_ticket','test','commit','read_ci','create_pr','update_ticket'])+input('Ticket ID / file locale / base branch','location',n.location||'');
+function connectionTargetFields(n){
+ if(n.provider==='github')return input('Owner / organizzazione','organization',n.organization||'')+input('Repository','repository',n.repository||n.target||'');
+ if(n.provider==='azure')return input('Organizzazione Azure DevOps','organization',n.organization||'')+input('Progetto','project',n.project||'')+input('Repository','repository',n.repository||n.target||'');
+ if(n.provider==='atlassian')return input('Repository Bitbucket workspace/repository','repository',n.repository||'');
+ return '';
 }
-function twgSetup(){
- const uid=Number(app.user.id),osuid=20000+uid,home='/data/users/'+uid;
- const prefix=`docker compose exec --user ${osuid}:${osuid} -e HOME=${home} -e XDG_CONFIG_HOME=${home}/.config -e TWG_CONFIG_DIR=${home}/.config/twg nodo twg`;
- modal('Collega Atlassian',`<p>Completa il login nel terminale del progetto e apri il link Atlassian mostrato dalla CLI.</p><pre class="source-view" data-no-i18n>${esc(prefix+' setup')}</pre><p>Per Bitbucket, completa anche la configurazione dedicata.</p><pre class="source-view" data-no-i18n>${esc(prefix+' setup bitbucket')}</pre><p class="note">Il login è personale e resta salvato dopo i riavvii. Inserisci eventuali token solo nel prompt protetto della CLI.</p><a href="https://developer.atlassian.com/cloud/twg-cli/getting-started/installation/" target="_blank" rel="noopener noreferrer">Documentazione Atlassian</a><p id="twg-status" role="status"></p>`,'<button type="button" data-action="twg-check">Verifica collegamento</button><button type="button" data-action="close-dialog">Chiudi</button>');
+function filterGithubEndpoints(catalog,query='',method=''){
+ const terms=query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+ return catalog.filter(e=>(!method||e.method===method)&&terms.every(term=>(e.id+' '+e.method+' '+e.path+' '+e.label).toLowerCase().includes(term)));
+}
+function applyGithubEndpoint(n,endpoint){
+ n.api_endpoint=endpoint.id;n.api_method=endpoint.method;n.api_path=(endpoint.server||'')+endpoint.path;
+ if(endpoint.server==='https://uploads.github.com')n.api_encoding='base64';
+ const parameters={};for(const match of endpoint.path.matchAll(/\{([^}]+)\}/g))if(!['owner','repo','org'].includes(match[1]))parameters[match[1]]='';
+ n.api_parameters=Object.keys(parameters).length?JSON.stringify(parameters,null,2):'';dirty();renderInspector();
+}
+function showGithubCatalog(){
+ captureInspectorFields();const workflow=currentWorkflow().id,node=app.selected,catalog=window.githubApiCatalog||[];
+ modal('Operazioni API GitHub',`<div class="github-api-filters"><label>${uiText('Filtra operazioni')}<input type="search" data-github-search placeholder="${esc(uiText('Nome, metodo o percorso API'))}"></label><label>${uiText('Metodo HTTP')}<jui-select data-github-method><jui-option value="" selected>${uiText('Tutti i metodi')}</jui-option>${['GET','HEAD','OPTIONS','POST','PUT','PATCH','DELETE'].map(m=>`<jui-option value="${m}">${m}</jui-option>`).join('')}</jui-select></label></div><p class="note" data-github-count role="status" aria-live="polite"></p><div class="github-api-results" data-github-results></div><button type="button" data-github-more>${uiText('Mostra altre operazioni')}</button>`,'',true);
+ const root=$('#dialog'),search=$('[data-github-search]',root),method=$('[data-github-method]',root),results=$('[data-github-results]',root),more=$('[data-github-more]',root);let limit=100;
+ const update=()=>{
+  const matches=filterGithubEndpoints(catalog,search.value,method.value),visible=matches.slice(0,limit);
+  $('[data-github-count]',root).textContent=matches.length?`${uiText('Operazioni')}: ${matches.length} / ${catalog.length} · ${uiText('Visualizzate')}: ${visible.length}`:uiText('Nessuna operazione corrispondente.');
+  results.innerHTML=visible.map(e=>`<button type="button" class="github-api-result" data-github-endpoint="${esc(e.id)}"><span class="code" data-no-i18n>${esc(e.method)}</span><span data-no-i18n><b>${esc(e.label)}</b><code>${esc(e.path)}</code><small>${esc(e.id)}</small></span></button>`).join('');
+  more.hidden=visible.length===matches.length;
+ };
+ search.oninput=method.onchange=()=>{limit=100;update()};more.onclick=()=>{limit+=100;update()};
+ results.onclick=e=>{const button=e.target.closest('[data-github-endpoint]');if(!button)return;const endpoint=catalog.find(e=>e.id===button.dataset.githubEndpoint),n=currentWorkflow().nodes.find(n=>n.id===node);if(!app.run&&currentWorkflow().id===workflow&&app.selected===node&&n?.provider==='github'&&endpoint){applyGithubEndpoint(n,endpoint);closeModal()}};
+ update();search.focus();
+}
+function githubRequestFields(n){
+ const catalog=window.githubApiCatalog||[],endpoint=catalog.find(e=>e.id===n.api_endpoint);
+ const textarea=(label,name,value,placeholder='')=>`<label>${esc(label)}<textarea name="${name}" rows="4" placeholder="${esc(placeholder)}">${esc(value||'')}</textarea></label>`;
+ return select('Endpoint GitHub','api_endpoint',n.api_endpoint||'',[['','Percorso personalizzato'],...catalog.map(e=>[e.id,e.id+' · '+e.method+' '+e.path+' · '+e.label])])+`<button type="button" data-action="github-api-catalog">${icon('search')}${uiText('Sfoglia e filtra operazioni')}</button>`+
+ select('Metodo HTTP','api_method',n.api_method||'GET',['GET','HEAD','OPTIONS','POST','PUT','PATCH','DELETE'])+
+ input('Percorso API','api_path',n.api_path||'/repos/{owner}/{repo}')+
+ textarea('Parametri percorso (JSON)','api_parameters',n.api_parameters,'{"issue_number":123}')+
+ textarea('Parametri query (JSON)','api_query',n.api_query,'{"per_page":100,"page":1}')+
+ textarea('Header aggiuntivi (JSON)','api_headers',n.api_headers,'{"Accept":"application/vnd.github+json"}')+
+ select('Formato corpo','api_encoding',n.api_encoding||'json',[['json','JSON'],['text','Testo'],['base64','Binario Base64']])+
+ textarea('Corpo richiesta','api_body',n.api_body,'{"title":"Nuova issue","body":"Descrizione"}')+
+ `<p class="note">Owner e repo nel percorso provengono dal nodo; completa gli altri parametri nel JSON. Per GraphQL usa POST /graphql e un corpo JSON con query e variables. Le scritture richiedono approvazione. I risultati includono gli header Link per la paginazione; ogni nodo esegue una pagina. Limite richiesta e risposta: 8 MiB.</p><a href="${esc(endpoint?.url||'https://docs.github.com/en/rest')}" target="_blank" rel="noopener noreferrer">Documentazione endpoint GitHub</a>`;
+}
+function connectionFields(n){
+ if(n.provider==='atlassian')return connectionTargetFields(n)+`<input type="hidden" name="operation" value="twg"><label>Argomenti TWG (JSON)<textarea name="command" rows="6" placeholder='["jira","workitem","get","ABC-123"]'>${esc(n.command||'')}</textarea></label><p class="note">Usa i comandi di Jira, Confluence, Bitbucket e degli altri prodotti TWG. Il workflow richiede conferma prima di eseguire il comando.</p><button type="button" data-action="twg-setup">${icon('plug')}Configura credenziali Atlassian</button>`;
+ if(n.provider==='servicenow')return select('Operazione','operation',n.operation||'check_connection',[['check_connection','Verifica connessione'],['read_ticket','Leggi incident'],['read_request','Leggi richiesta da configurazione'],['update_ticket','Aggiorna note incident'],['apply_ticket_plan','Esegui piano ITSM'],['apply_ticket_batch','Esegui lotto ITSM'],['create_incident','Crea incident da piano'],['order_catalog','Ordina articolo da piano'],['resolve_ticket','Risolvi incident verificato']])+input(n.operation==='read_request'?'File di configurazione':'sys_id incident oppure file JSON del piano','location',n.location||'')+(n.operation==='resolve_ticket'?select('Nodo di creazione incidente','target',n.target||'',[['','Unico nodo di creazione precedente'],...currentWorkflow().nodes.filter(x=>x.kind==='Connection'&&x.provider==='servicenow'&&['create_incident','apply_ticket_plan','apply_ticket_batch'].includes(x.operation)).map(x=>[x.id,x.title])]):'')+`<p class="note">Le credenziali provengono da Personal Settings → Connessioni → ServiceNow. Le scritture mostrano istanza e contenuto esatto prima della conferma. Per i piani usa un percorso relativo al workspace.</p>`;
+ if(n.provider==='github'&&n.operation==='api_request')return connectionTargetFields(n)+select('Operazione','operation','api_request',['read_ticket','read_ci','create_pr',['api_request','Richiesta API GitHub']])+githubRequestFields(n);
+ const operations=n.provider==='github'?['read_ticket','read_ci','create_pr','api_request']:n.provider==='azure'?['read_ticket','create_pr']:['read_ticket','test','commit'];
+ return connectionTargetFields(n)+select('Operazione','operation',operations.includes(n.operation)?n.operation:operations[0],operations.map(op=>op==='api_request'?[op,'Richiesta API GitHub']:op))+input('Ticket ID / file locale / base branch','location',n.location||'');
+}
+function twgSetup(){settingsDialog('connections')}
+function atlassianDraft(root){const f=settingsDraftData(root);return {base_url:f.get('base_atlassian')||'',username:f.get('username_atlassian')||'',token:f.get('token_atlassian')||'',repository:app.settings.connections.atlassian?.repository||''}}
+async function testAtlassian(button){
+ const root=$('#settings-form'),status=$('[data-atlassian-status]',root);button.disabled=true;status.textContent=uiText('Verifica connessione in corso…');
+ try{const result=await api('/connections/atlassian/status',atlassianDraft(root),'POST');if(status.isConnected)status.textContent=uiText('Accesso Atlassian')+': '+uiText(result.oauth_connected?'Collegato':'Non verificato')+' · Bitbucket: '+uiText(result.bitbucket_connected===null?'Token non configurato':result.bitbucket_connected?'Collegato':'Non verificato');}
+ catch(error){if(status.isConnected)status.textContent=error.message}finally{if(button.isConnected)button.disabled=false}
+}
+async function loginAtlassian(button){
+ const root=$('#settings-form'),status=$('[data-atlassian-login-status]',root);
+ if(root.settingsEditedFields.has('base_atlassian')){status.textContent=uiText('Salva prima il sito Atlassian.');return;}
+ button.disabled=true;status.textContent=uiText('Avvio collegamento Atlassian…');
+ try{await api('/connections/atlassian/login',{});const poll=async()=>{if(!status.isConnected)return;const result=await api('/connections/atlassian/login');if(!status.isConnected)return;
+ if(result.verification_url){const url=new URL(result.verification_url);if(url.origin!=='https://auth.atlassian.com'||url.pathname!=='/oauth/activate')throw Error('URL autorizzazione non valido');status.innerHTML=`<a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${uiText('Apri Atlassian e autorizza il collegamento')}</a>`;}
+ if(['starting','waiting'].includes(result.state)){setTimeout(()=>poll().catch(error=>{if(status.isConnected){status.textContent=error.message;button.disabled=false}}),2000);return;}
+ status.textContent=uiText(result.state==='connected'?'Account Atlassian collegato.':'Collegamento non completato. Riprova e verifica i permessi.');button.disabled=false;};await poll();}
+ catch(error){if(status.isConnected)status.textContent=error.message;if(button.isConnected)button.disabled=false}
 }
 async function twgCheck(button){
  const output=$('#twg-status');button.disabled=true;output.textContent='Verifica collegamento…';
  try{const s=await api('/connections/atlassian/status');if(output.isConnected)output.textContent=!s.available?'TWG CLI non disponibile. Ricostruisci il container.':s.connected?'Collegamento Atlassian verificato.':'Completa il login e verifica i permessi Atlassian, poi riprova.'}
  catch(e){if(output.isConnected)output.textContent=e.message}finally{if(button.isConnected)button.disabled=false}
 }
-function serviceHeading(id,configured,isAgent){const info=serviceInfo[id],status=configured?(isAgent?'Credenziale configurata':'Token salvato'):'Da configurare';return `<header class="service-heading"><span class="service-mark service-${id}">${icon(info.icon,info.icon.startsWith('brand-')?'brand-icon':'')}</span><div class="service-title"><h3>${esc(info.name)}</h3><p>${esc(info.description)}</p></div><span class="service-status ${configured?'is-configured':''}" data-tip="${esc(status)}"><i aria-hidden="true"></i>${esc(status)}</span></header>`}
+function serviceHeading(id,configured,isAgent,isLocal=false,isMulti=false){const info=serviceInfo[id],status=configured?(isMulti?'Provider disponibili':isLocal?'Endpoint configurato':isAgent?'Credenziale configurata':'Token salvato'):'Da configurare';return `<header class="service-heading"><span class="service-mark service-${id}">${icon(info.icon,info.icon.startsWith('brand-')?'brand-icon':'')}</span><div class="service-title"><h3>${esc(info.name)}</h3><p>${esc(info.description)}</p></div><span class="service-status ${configured?'is-configured':''}" data-tip="${esc(status)}"><i aria-hidden="true"></i>${esc(status)}</span></header>`}
 function compactNumber(rt,key,label,value,min,max){return `<label>${label}<input name="compact_${rt}_${key}" type="number" min="${min}" max="${max}" step="1" required value="${value}"></label>`}
 function compactionFields(rt,c){
  let fields='',note='';
@@ -888,7 +1051,7 @@ function toggleAccountMenu(){
  hideTooltip();let menu=$('#account-menu');
  if(!menu){
   menu=document.createElement('div');menu.id='account-menu';menu.className='account-menu';menu.setAttribute('popover','manual');menu.setAttribute('role','menu');menu.setAttribute('aria-labelledby','account');
-  menu.innerHTML=`<div class="account-version"><span class="account-version-number" data-no-i18n>rightcommit v${esc(authInfo.version||'')}</span><a class="account-site-link" role="menuitem" href="https://rightcommit.com" target="_blank" rel="noopener noreferrer" aria-label="${esc(uiText('Apri il sito rightcommit.com in una nuova scheda'))}" title="${esc(uiText('Apri il sito rightcommit.com in una nuova scheda'))}">${icon('external-link')}</a></div><hr role="separator"><button type="button" role="menuitem" data-action="settings">${icon('settings-2')}<span>Configurazioni personali</span></button>${app.user?.admin?`<button type="button" role="menuitem" data-action="manage-templates">${icon('workflow')}<span>Gestisci template</span></button>`:''}<hr role="separator"><button type="button" role="menuitem" data-action="logout" class="account-signout">${icon('log-out')}<span data-no-i18n>Sign out</span></button>`;
+  menu.innerHTML=`<div class="account-version"><span class="account-version-number" data-no-i18n>rightcommit v${esc(authInfo.version||'')}</span><a class="account-site-link" role="menuitem" href="https://rightcommit.com" target="_blank" rel="noopener noreferrer" aria-label="${esc(uiText('Apri il sito rightcommit.com in una nuova scheda'))}" title="${esc(uiText('Apri il sito rightcommit.com in una nuova scheda'))}">${icon('external-link')}</a></div><hr role="separator"><button type="button" role="menuitem" data-action="settings">${icon('settings-2')}<span>Configurazioni personali</span></button>${app.user?.admin?`<button type="button" role="menuitem" data-action="manage-templates">${icon('workflow')}<span>Gestisci template</span></button>`:''}<hr role="separator"><button type="button" role="menuitem" data-action="logout" class="account-signout">${icon('log-out')}<span>Esci</span></button>`;
   document.body.append(menu);
   document.addEventListener('pointerdown',e=>{if(menu.matches(':popover-open')&&!e.composedPath().includes(menu)&&!e.composedPath().includes($('#account')))closeAccountMenu()},true);
   window.addEventListener('resize',closeAccountMenu);
@@ -939,21 +1102,34 @@ function updateTimeoutHint(){
  hint.textContent=hint.hidden?'':new Intl.NumberFormat(nodoLocale(),{style:'unit',unit:seconds>=3600?'hour':'minute',unitDisplay:'long',maximumFractionDigits:2}).format(seconds/(seconds>=3600?3600:60));
 }
 window.addEventListener('nodo-language-changed',updateTimeoutHint);
+function piProviderOptions(){return (app.settings.pi_providers||[]).map(provider=>[provider.id,provider.label])}
+function selectedPiProvider(form){const value=$('[name=provider_pi]',form).value;return value==='multi'?$('[name=pi_default_provider]',form).value:value}
+function piNodeFields(node){
+ const runtime=node.runtime||app.settings.default_runtime;
+ if(runtime!=='pi'||!app.settings.agents.pi?.multi_provider)return '';
+ const provider=node.pi_provider||app.settings.agents.pi.provider;
+ return select('Provider Pi','pi_provider',node.pi_provider||'',[['','Provider personale predefinito'],...piProviderOptions()])+(provider==='local'?input('URL locale (vuoto = .env)','pi_base_url',node.pi_base_url||'','url','PI_LOCAL_BASE_URL'):'')+'<p class="note">Il nodo usa le credenziali e i parametri del provider da .env o dal login nativo Pi. Specifica il modello esatto; le chiavi non vengono salvate nel workflow.</p>';
+}
 async function settingsDialog(activeTab='general'){
   app.settings=await api('/settings');const s=app.settings;
-  let body=`<form id="settings-form"><label class="settings-appearance">Aspetto<jui-select data-appearance-theme aria-label="Aspetto">${[['light','Chiaro'],['dark','Scuro'],['system','Sistema']].map(([value,label])=>`<jui-option value="${value}" ${appearanceTheme===value?'selected':''}>${label}</jui-option>`).join('')}</jui-select></label><div class="tabs settings-tabs" role="tablist" aria-label="Configurazioni personali">${[['general','Generali'],['execution','Esecuzione'],['agents','Agenti'],['compaction','Compattazione'],['connections','Connessioni'],['mcp','MCP'],['sources','Sorgenti /sources'],['activity','Registro attività'],['environment','Environment'],['cli','Check CLI'],...(app.user.admin?[['admin','Admin']]:[])].map(([id,label],i)=>`<button type="button" role="tab" id="settings-tab-${id}" data-settings-tab="${id}" aria-controls="settings-panel-${id}" aria-selected="${i===0}" tabindex="${i===0?0:-1}" class="${i===0?'active':''} ${['connections','activity','admin'].includes(id)?'settings-nav-break':''}">${label}</button>`).join('')}</div><section id="settings-panel-agents" class="settings-tab-panel" role="tabpanel" aria-labelledby="settings-tab-agents"><p class="note">Seleziona la configurazione Default per la chat del manager e per gli agenti che usano le preferenze personali.</p><p class="note settings-note">Le credenziali sono personali. Lascia un campo vuoto per conservare quella salvata; usa il cestino per rimuoverla.</p><h3 class="settings-group-title">Agenti</h3>`;
+  let body=`<div id="settings-form" data-settings-root><label class="settings-appearance">Aspetto<jui-select data-appearance-theme aria-label="Aspetto">${[['light','Chiaro'],['dark','Scuro'],['system','Sistema']].map(([value,label])=>`<jui-option value="${value}" ${appearanceTheme===value?'selected':''}>${label}</jui-option>`).join('')}</jui-select></label><div class="tabs settings-tabs" role="tablist" aria-label="Configurazioni personali">${[['general','Generali'],['execution','Esecuzione'],['agents','Agenti'],['manager','Project manager'],['compaction','Compattazione'],['connections','Connessioni'],['mcp','MCP'],['sources','Sorgenti /sources'],['activity','Registro attività'],['environment','Environment'],['cli','Check CLI'],...(app.user.admin?[['admin','Admin']]:[])].map(([id,label],i)=>`<button type="button" role="tab" id="settings-tab-${id}" data-settings-tab="${id}" aria-controls="settings-panel-${id}" aria-selected="${i===0}" tabindex="${i===0?0:-1}" class="${i===0?'active':''} ${['connections','activity','admin'].includes(id)?'settings-nav-break':''}">${label}</button>`).join('')}</div><section id="settings-panel-agents" class="settings-tab-panel" role="tabpanel" aria-labelledby="settings-tab-agents"><p class="note">Seleziona la configurazione Default per la chat del manager e per gli agenti che usano le preferenze personali.</p><h3 class="settings-group-title">Agenti</h3>`;
   for(const rt of ['codex','claude','pi']){
     const a=s.agents[rt]||{};
-    body+=`<section class="settings-section" data-service="${rt}">${serviceHeading(rt,!!a.configured,true)}<label class="settings-default"><span>Default</span><jui-switch exclusive aria-label="Default ${esc(serviceInfo[rt].name)}" name="default_runtime" value="${rt}" ${s.default_runtime===rt?'checked':''} required></jui-switch></label><div class="form-grid">${input('Modello','model_'+rt,a.model||'','text',({codex:'gpt-6.1-sol',claude:'opus'})[rt]||'')}${select('Ragionamento','effort_'+rt,a.effort||'low',['low','medium','high','xhigh'])}${credentialField('API key personale','key_'+rt,'Rimuovi credenziale salvata',a.api_key_preview)}${rt==='pi'?select('Provider Pi','provider_pi',a.provider||'anthropic',[['anthropic','Anthropic'],['openai','OpenAI'],['openrouter','OpenRouter']]):''}</div>${rt==='pi'?`<label class="settings-switch"><span>Abilita codemode</span><jui-switch name="codemode_pi" aria-label="Abilita codemode" ${a.codemode?'checked':''}></jui-switch></label><p class="note">Nei Task il modello può scrivere script JavaScript che chiamano gli altri strumenti, anche in parallelo, e filtrano l’output prima che entri nel contesto. Gli script girano in una sandbox senza rete né file system; ogni chiamata agli strumenti compare nell’Activity Log.</p>`:''}${compactionFields(rt,s.compaction?.[rt]||{})}${app.user.host_import&&rt!=='pi'?`<button type="button" data-action="import-host" data-runtime="${rt}">Importa login locale ${esc(rt)}</button>`:''}</section>`;
+    body+=`<section class="settings-section" data-service="${rt}">${serviceHeading(rt,!!a.configured,true,rt==='pi'&&a.provider==='local',rt==='pi'&&a.multi_provider)}<label class="settings-default"><span>Default</span><jui-switch exclusive aria-label="Default ${esc(serviceInfo[rt].name)}" name="default_runtime" value="${rt}" ${s.default_runtime===rt?'checked':''} required></jui-switch></label><div class="form-grid">${input('Modello','model_'+rt,a.model||'','text',({codex:'gpt-6.1-sol',claude:'opus'})[rt]||'')}${select('Ragionamento','effort_'+rt,a.effort||'low',['low','medium','high','xhigh'])}${credentialField('API key personale','key_'+rt,'Rimuovi credenziale salvata',a.api_key_preview)}${rt==='pi'?select('Provider Pi','provider_pi',a.multi_provider?'multi':(a.provider||'anthropic'),[['multi','Multi-provider'],null,...piProviderOptions().flatMap(option=>option[0]==='local'?[null,option]:[option])]):''}</div>${rt==='pi'?`<div data-pi-multi-default ${a.multi_provider?'':'hidden'}>${select('Provider predefinito Pi','pi_default_provider',a.provider||'anthropic',piProviderOptions())}<p class="note">In modalità Multi-provider ogni nodo Pi può scegliere il proprio provider. Il provider e il modello predefiniti si applicano alla chat del manager, al supervisore e ai nodi che ereditano le preferenze personali. Le credenziali provengono da .env o dal login nativo Pi.</p></div><div data-pi-local-url ${a.provider==='local'?'':'hidden'}>${input('URL del server locale','base_url_pi',a.base_url||'','url','http://host.docker.internal:11434/v1')}</div><p data-pi-local-note class="note" ${a.provider==='local'?'':'hidden'}>Inserisci l’URL completo dell’API compatibile OpenAI, incluso /v1 se previsto dal server, e il nome esatto del modello. Lascia la chiave vuota se il server non richiede autenticazione. Dal container, localhost indica il container stesso.</p><p class="note">Per avviare Pi scegli un modello e configura le credenziali del provider. Lo stato indica la presenza di credenziali, senza verificarle online.</p><button type="button" data-action="pi-check">${icon('plug')}Verifica connessione</button><p data-pi-status role="status" aria-live="polite"></p><p class="note">La verifica invia una breve richiesta al modello usando i valori presenti nei campi. Non salva le impostazioni.</p><label class="settings-switch"><span>Abilita codemode</span><jui-switch name="codemode_pi" aria-label="Abilita codemode" ${a.codemode?'checked':''}></jui-switch></label><p class="note">Nei Task il modello può scrivere script JavaScript che chiamano gli altri strumenti, anche in parallelo, e filtrano l’output prima che entri nel contesto. Gli script girano in una sandbox senza rete né file system; ogni chiamata agli strumenti compare nell’Activity Log.</p>`:''}${compactionFields(rt,s.compaction?.[rt]||{})}${app.user.host_import&&rt!=='pi'?`<button type="button" data-action="import-host" data-runtime="${rt}">Importa login locale ${esc(rt)}</button>`:''}</section>`;
   }
   body+=`<div class="settings-execution-limits"><section class="settings-section"><h3>Timeout del turno</h3><p class="note">Tempo massimo per un nodo che usa un agente. Ogni nuovo tentativo ha il proprio limite.</p><label>Timeout turno in secondi<input name="timeout" type="number" min="1" aria-describedby="timeout-duration" step="1" required value="${s.task_timeout_secs}"></label><p id="timeout-duration" class="small" aria-live="polite" hidden></p></section><section class="settings-section"><h3>Workflow paralleli</h3><p class="note">Numero massimo di workflow eseguiti contemporaneamente dal tuo account. Gli altri attendono in coda. Ridurre il limite non interrompe quelli già attivi.</p><label>Workflow paralleli per utente<input name="workflow_parallelism" type="number" min="1" step="1" required value="${s.workflow_parallelism??5}"></label></section></div>${compactionSessionPanel()}</section><section id="settings-panel-mcp" class="settings-tab-panel" role="tabpanel" aria-labelledby="settings-tab-mcp" hidden>${mcpSettingsContent(s)}<div class="settings-mcp-actions"><button type="button" class="primary" data-action="mcp-edit">${icon('plus')}Aggiungi server MCP</button><button type="button" data-action="mcp-example">${icon('folder-git-2')}Esempio locale</button></div></section><section id="settings-panel-connections" class="settings-tab-panel" role="tabpanel" aria-labelledby="settings-tab-connections" hidden>`;
   for(const p of ['github','azure','servicenow']){
     const c=s.connections[p]||{};
-    body+=`<section class="settings-section" data-service="${p}">${serviceHeading(p,!!c.configured,false)}<div class="form-grid"><div class="service-url">${input('Base URL HTTPS','base_'+p,c.base_url||(p==='github'?'https://api.github.com':''),'url')}</div>${credentialField('Token personale','token_'+p,'Rimuovi token salvato')}${input(p==='github'?'Repository owner/repo':'Repository','repo_'+p,c.repository||'')}${input('Progetto / organizzazione','project_'+p,c.project||'')}</div></section>`;
+    if(p==='servicenow'){
+      body+=`<section class="settings-section" data-service="servicenow">${serviceHeading(p,!!c.configured,false)}<div class="form-grid"><div class="service-url">${input('URL istanza ServiceNow','base_servicenow',c.base_url||'','url','https://dev123456.service-now.com')}</div>${select('Autenticazione','sn_auth',c.authentication||(c.configured?'bearer':'basic'),[['basic','Utente e password PDI'],['client_credentials','OAuth · Client Credentials'],['bearer','Bearer token manuale']])}</div><div class="form-grid" data-sn-auth="basic">${input('Utente dell’istanza','sn_username',c.username||'')}${credentialField('Password dell’istanza','sn_password','Rimuovi password salvata')}</div><fieldset class="servicenow-oauth" data-sn-auth="client_credentials"><legend>OAuth</legend><p class="note">rightcommit ottiene il token da ServiceNow e ne richiede uno nuovo prima della scadenza, anche per i workflow schedulati.</p><div class="form-grid">${input('Client ID','sn_client_id',c.client_id||'')}${credentialField('Client Secret','sn_client_secret','Rimuovi Client Secret salvato')}${input('Scope OAuth (opzionale)','sn_oauth_scope',c.oauth_scope||'')}</div><p class="note">Endpoint token: URL dell’istanza + /oauth_token.do. Client Credentials deve essere abilitato sulla PDI con un utente applicativo autorizzato.</p></fieldset><div data-sn-auth="bearer">${credentialField('Token OAuth','token_servicenow','Rimuovi token salvato')}<p class="note">Inserisci il solo access token, senza Bearer. Questa modalità non rinnova automaticamente i token.</p></div><p class="note">Le credenziali sono cifrate e non vengono passate agli agenti. Lascia vuoto un campo segreto per conservarlo; usa il cestino per rimuoverlo. La verifica usa i valori inseriti senza salvarli.</p><button type="button" data-action="servicenow-check">Verifica connessione</button><p data-servicenow-status role="status" aria-live="polite"></p></section>`;
+      continue;
+    }
+    body+=`<section class="settings-section" data-service="${p}">${serviceHeading(p,!!c.configured,false)}<div class="form-grid"><div class="service-url">${input('Base URL HTTPS','base_'+p,c.base_url||(p==='github'?'https://api.github.com':''),'url')}</div>${credentialField('Token personale','token_'+p,'Rimuovi token salvato')}<p class="note">Organizzazione, progetto e repository si configurano nel nodo Connection.</p></div></section>`;
   }
-  body+=`<section class="settings-section" data-service="atlassian"><header class="service-heading"><span class="service-mark">${icon('plug')}</span><div class="service-title"><h3>Atlassian Teamwork Graph CLI</h3><p>Jira, Confluence, Bitbucket e altri prodotti Atlassian</p></div></header><p class="note">Accesso OAuth personale. Bitbucket richiede una configurazione separata.</p><button type="button" data-action="twg-setup">${icon('plug')}Configura accesso Atlassian</button></section>`;
+  const atl=s.connections.atlassian||{};
+  body+=`<section class="settings-section" data-service="atlassian"><header class="service-heading"><span class="service-mark">${icon('plug')}</span><div class="service-title"><h3>Atlassian</h3><p>Jira, Confluence, Bitbucket e altri prodotti Atlassian</p></div></header><h4>Jira, Confluence e altri prodotti</h4><div class="form-grid">${input('URL sito Atlassian','base_atlassian',atl.base_url||'','url','https://your-site.atlassian.net')}</div><p class="note">Salva il sito, poi collega il tuo account dal browser. I permessi concessi determinano quali prodotti puoi usare.</p><button type="button" data-action="twg-login">Collega account Atlassian</button><div data-atlassian-login-status role="status" aria-live="polite"></div><h4>Bitbucket</h4><p class="note">Bitbucket usa un token API separato. Inserisci l’email del tuo account Atlassian e il token con gli ambiti necessari.</p><div class="form-grid">${input('Email account Atlassian','username_atlassian',atl.username||'','email')}${credentialField('Token API Bitbucket','token_atlassian','Rimuovi token Bitbucket salvato')}</div><p>${uiText(atl.configured?'Token Bitbucket salvato':'Token Bitbucket non configurato')}</p><p class="note">Le credenziali sono cifrate e non vengono passate agli agenti. Lascia vuoto un campo segreto per conservarlo; usa il cestino per rimuoverlo. La verifica usa i valori inseriti senza salvarli.</p><button type="button" data-action="atlassian-check">Test connection</button><p data-atlassian-status role="status" aria-live="polite"></p></section>`;
   body+=`<section class="settings-section"><h3>Sorgenti /sources</h3><label>Limite copia sorgenti (MiB)<input name="source_copy_limit_mib" type="number" min="1" max="17592186044415" step="1" required value="${s.source_copy_limit_mib??10}"></label><p class="note">Vale sia come limite per file sia come soglia dell’avviso per cartella, solo per le copie da /sources. La modifica permanente e i repository remoti non hanno questa soglia.</p></section>`;
-  body+=`</section><section id="settings-panel-activity" class="settings-tab-panel" role="tabpanel" aria-labelledby="settings-tab-activity" hidden><section class="settings-section"><h3>Registro attività</h3><label>Esecuzioni per pagina<input name="activity_log_page_size" type="number" min="1" max="100" step="1" required value="${s.activity_log_page_size??10}"></label><p class="note">Da 1 a 100; valore predefinito 10. Il registro mostra le ultime 100 esecuzioni del workflow, oltre all’esecuzione aperta se precedente.</p>${select('Verbosità','activity_log_verbosity',s.activity_log_verbosity||'preview',[['preview','Primi 30 caratteri'],['full','Testo completo']])}<p class="note">L’anteprima mostra i primi 30 caratteri dei dettagli. Il testo completo mostra tutti i dettagli disponibili. La cronologia salvata resta invariata.</p></section></section><p id="settings-error" class="error" role="alert"></p></form><form id="password-form" hidden></form>${app.user.admin?'<form id="user-form" hidden></form>':''}`;
+  body+=`</section><section id="settings-panel-activity" class="settings-tab-panel" role="tabpanel" aria-labelledby="settings-tab-activity" hidden><section class="settings-section"><h3>Registro attività</h3><label>Esecuzioni per pagina<input name="activity_log_page_size" type="number" min="1" max="100" step="1" required value="${s.activity_log_page_size??10}"></label><p class="note">Da 1 a 100; valore predefinito 10. Il registro mostra le ultime 100 esecuzioni del workflow, oltre all’esecuzione aperta se precedente.</p>${select('Verbosità','activity_log_verbosity',s.activity_log_verbosity||'preview',[['preview','Primi 30 caratteri'],['full','Testo completo']])}<p class="note">L’anteprima abbrevia a 30 caratteri solo i dettagli dei tool. Errori e risposte dell’agente restano completi. La cronologia salvata resta invariata.</p></section></section><p id="settings-error" class="error" role="alert"></p></div><form id="password-form" hidden></form>${app.user.admin?'<form id="user-form" hidden></form>':''}`;
   modal('Configurazioni personali',body,'<button type="button" data-action="close-dialog">Chiudi</button><button type="button" data-action="save-settings" class="primary">Salva configurazioni</button>');
   const form=$('#settings-form');
   $('[name=timeout]',form).oninput=updateTimeoutHint;updateTimeoutHint();
@@ -968,9 +1144,16 @@ async function settingsDialog(activeTab='general'){
     form.append(section);return section;
   };
   const general=addPanel('general'),compaction=addPanel('compaction'),sources=addPanel('sources');
+  const manager=addPanel('manager');
+  manager.innerHTML=`<section class="settings-section"><h3>Project manager</h3><label class="settings-switch"><span>Abilita alla scrittura ed azioni dispositive</span><jui-switch name="manager_write_enabled" aria-label="Abilita alla scrittura ed azioni dispositive" ${s.manager_write_enabled?'checked':''}></jui-switch></label><p class="note">Attivo per default. Abilita i tool di scrittura, modifica file e comandi shell del Project manager. Dopo il salvataggio si applica dal messaggio successivo, anche nelle chat esistenti.</p></section>`;
   addPanel('environment');addPanel('cli');
   general.innerHTML=`<section class="settings-section account-summary"><h3>Account personale</h3><p class="account-email" data-no-i18n>${esc(app.user.email)}</p><p class="account-user-id"><span>ID utente</span>: <span data-no-i18n>${esc(app.user.id)}</span></p><p class="note">I tuoi workflow, esecuzioni e configurazioni sono separati dagli altri account.</p></section>`;
   general.append($('.settings-appearance',form));
+  const notices=document.createElement('section');notices.className='settings-section';
+  notices.innerHTML=`<h3>Avvisi nel browser</h3><label class="settings-switch"><span>Mostra l’avviso degli agenti non configurati</span><jui-switch data-agent-setup-enabled aria-label="Mostra l’avviso degli agenti non configurati" ${agentSetupNoticeHidden()?'':'checked'}></jui-switch></label><p class="note">La preferenza si salva subito e vale solo per questo browser.</p>`;
+  general.append(notices);
+  const agentNotice=$('[data-agent-setup-enabled]',notices);
+  agentNotice.addEventListener('change',()=>{if(!setAgentSetupNoticeHidden(!agentNotice.checked))agentNotice.checked=!agentSetupNoticeHidden()});
   const previews=document.createElement('section');previews.className='settings-section';
   previews.innerHTML=`<h3>Anteprima file</h3><label>Limite anteprima file (MB)<input name="file_preview_limit_mb" type="number" min="1" max="100" step="1" required value="${s.file_preview_limit_mb??5}"></label><p class="note">Da 1 a 100 MB. Si applica ai file di testo e Markdown in Storage e Artefatti. Predefinito: 5 MB.</p>`;
   general.append(previews);
@@ -1019,12 +1202,25 @@ async function settingsDialog(activeTab='general'){
   });
   activate(tabs.find(tab=>tab.dataset.settingsTab===activeTab)||tabs[0]);
   form.addEventListener('invalid',e=>{const panel=e.target.closest('[role="tabpanel"]');if(panel)activate(tabs.find(t=>t.getAttribute('aria-controls')===panel.id))},true);
-  form.elements.provider_pi.addEventListener('change',()=>loadPiModels(form));
+  splitSettingsForms(form);
+  trackSettingsEdits(form);
+  form.settingsRevision=s._revision;
+  for(const name of ['provider_pi','pi_default_provider'])$('[name='+name+']',form).addEventListener('change',()=>{syncPiLocalFields(form);loadPiModels(form)});
+  $('[name=sn_auth]',form).addEventListener('change',()=>syncServiceNowFields(form));
+  syncServiceNowFields(form);
+  syncPiLocalFields(form);
   loadPiModels(form);
   loadCompactRuns();
 }
+function syncPiLocalFields(form){
+ const multi=$('[name=provider_pi]',form).value==='multi',local=selectedPiProvider(form)==='local',field=$('[name=base_url_pi]',form);
+ $('[data-pi-multi-default]',form).hidden=!multi;
+ const key=$('[name=key_pi]',form),supportsKey=(app.settings.pi_providers||[]).find(provider=>provider.id===selectedPiProvider(form))?.key_env;key.disabled=multi||!supportsKey;key.closest('label').hidden=key.disabled;
+ $('[data-pi-local-url]',form).hidden=!local;$('[data-pi-local-note]',form).hidden=!local;
+ field.disabled=!local;field.required=local&&!multi&&!app.settings.pi_local_endpoint_available;
+}
 async function loadPiModels(form){
-  const field=form.elements.model_pi,provider=form.elements.provider_pi.value;
+  const field=$('[name=model_pi]',form),provider=selectedPiProvider(form);
   const version=form.piModelsVersion=(form.piModelsVersion||0)+1;
   form.querySelector('#pi-model-catalog')?.dispose?.();
   form.querySelector('#pi-model-catalog')?.remove();
@@ -1085,7 +1281,105 @@ async function showEnvironment(host=null){
   const status=$('[data-environment-status]',dialog);status.hidden=result.names.length>0;status.textContent=uiText('Nessuna variabile disponibile.');
  }catch(error){if(dialog.isConnected){const status=$('[data-environment-status]',dialog);status.textContent=error.message;status.classList.add('error')}}
 }
-async function saveSettings(){if(!$('#settings-form').reportValidity())return;const f=new FormData($('#settings-form')),s=structuredClone(app.settings);s.activity_log_verbosity=f.get('activity_log_verbosity');s.activity_log_page_size=Number(f.get('activity_log_page_size'));s.default_runtime=f.get('default_runtime');s.task_timeout_secs=Number(f.get('timeout'));s.workflow_parallelism=Number(f.get('workflow_parallelism'));s.compaction={};for(const rt of ['claude','codex','pi']){s.compaction[rt]={...(app.settings.compaction?.[rt]||{})};for(const field of ['context_window_tokens','threshold_tokens','trigger_percent','reserve_tokens','keep_recent_tokens'])if(f.has('compact_'+rt+'_'+field))s.compaction[rt][field]=Number(f.get('compact_'+rt+'_'+field));}s.compaction.claude.context_window_tokens=0;s.compaction.claude.threshold_tokens=0;s.source_copy_limit_mib=Number(f.get('source_copy_limit_mib'));s.file_preview_limit_mb=Number(f.get('file_preview_limit_mb'));for(const rt of ['codex','claude','pi'])s.agents[rt]={model:f.get('model_'+rt),effort:f.get('effort_'+rt),api_key:f.get('key_'+rt),provider:rt==='pi'?f.get('provider_pi'):'anthropic',codemode:rt==='pi'&&f.has('codemode_pi')};for(const p of ['github','azure','servicenow'])s.connections[p]={base_url:f.get('base_'+p),token:f.get('token_'+p),repository:f.get('repo_'+p),project:f.get('project_'+p)};const activeTab=$('[data-settings-tab][aria-selected="true"]')?.dataset.settingsTab||'agents';try{app.settings=await api('/settings',s,'PUT');render();await settingsDialog(activeTab);window.dispatchEvent(new Event('settings-saved'));toast('Configurazioni personali salvate')}catch(e){$('#settings-error').textContent=e.message}}
+function piConnectionDraft(form){const data=new FormData(form);return {provider:selectedPiProvider(form)||'anthropic',multi_provider:data.get('provider_pi')==='multi',model:data.get('model_pi')||'',api_key:data.get('key_pi')||'',base_url:data.get('base_url_pi')||''}}
+async function checkPiConnection(button){
+ const form=button.closest('form'),status=$('[data-pi-status]',form),draft=piConnectionDraft(form);
+ status.textContent=uiText('Verifica connessione Pi in corso…');status.classList.remove('error');button.disabled=true;
+ try{
+  const result=await api('/agents/pi/status',draft,'POST');
+  if(!status.isConnected)return;
+  if(JSON.stringify(piConnectionDraft(form))!==JSON.stringify(draft)){status.textContent=uiText('I campi Pi sono cambiati durante la verifica. Ripeti la verifica.');return}
+  if(result.connected)for(const name of ['provider_pi','model_pi','key_pi','base_url_pi'])form.closest('[data-settings-root]')?.settingsEditedFields?.add(name);
+  status.textContent=uiText(result.message);
+ }catch(error){if(status.isConnected){status.textContent=error.message;status.classList.add('error')}}finally{if(button.isConnected)button.disabled=false}
+}
+function syncServiceNowFields(form){
+ const method=$('[name=sn_auth]',form).value;
+ for(const group of $$('[data-sn-auth]',form))group.hidden=group.dataset.snAuth!==method;
+}
+function serviceNowDraft(form){
+ const f=new FormData(form);
+ return {base_url:f.get('base_servicenow')||'',authentication:f.get('sn_auth')||'bearer',username:f.get('sn_username')||'',password:f.get('sn_password')||'',token:f.get('token_servicenow')||'',client_id:f.get('sn_client_id')||'',client_secret:f.get('sn_client_secret')||'',oauth_scope:f.get('sn_oauth_scope')||''};
+}
+function splitSettingsForms(root){
+ let index=0;
+ for(const section of root.querySelectorAll('.settings-section')){
+  const fields=[...section.querySelectorAll('input,textarea,jui-select,jui-switch')].filter(field=>field.name&&!field.getAttribute('form')&&!field.closest('form'));
+  if(!fields.length)continue;
+  const form=document.createElement('form');form.id='settings-'+(section.dataset.service||section.closest('[role=tabpanel]')?.id||'section')+'-'+index++;
+  form.className='settings-service-form';form.autocomplete='off';form.style.display='contents';
+  form.onsubmit=event=>{event.preventDefault();saveSettings()};
+  while(section.firstChild)form.append(section.firstChild);
+  section.append(form);
+ }
+}
+function settingsFormData(root){
+ if(root instanceof HTMLFormElement)return new FormData(root);
+ const data=new FormData();
+ for(const form of root.querySelectorAll('form.settings-service-form'))for(const [name,value] of new FormData(form))data.append(name,value);
+ return data;
+}
+function trackSettingsEdits(form){
+ form.settingsEditedFields=new Set();
+ form.settingsInitialData=settingsFormData(form);
+ for(const field of form.querySelectorAll('input,textarea,jui-select,jui-switch')){
+  if(!field.name||!field.form||!(field.form===form||form.contains(field.form))||!field.matches('input,textarea'))continue;
+  if(!['checkbox','radio'].includes(field.type))form.settingsInitialData.set(field.name,field.defaultValue);
+  const service=field.closest('[data-service]')?.dataset.service||field.form.id;
+  field.id=field.form.id+'-'+field.name;
+  field.autocomplete=field.type==='password'?`section-rightcommit-${service} new-password`:'off';
+  field.setAttribute('data-lpignore','true');field.setAttribute('data-1p-ignore','true');field.setAttribute('data-bwignore','true');
+  if(field.type==='password')field.setAttribute('autocapitalize','off');
+ }
+ if(form.matches('[data-settings-root]')){
+ for(const rt of ['codex','claude','pi']){
+  form.settingsInitialData.set('model_'+rt,app.settings.agents[rt]?.model||'');
+  form.settingsInitialData.set('key_'+rt,'');
+ }
+ for(const provider of ['github','azure','servicenow'])form.settingsInitialData.set('token_'+provider,'');
+ form.settingsInitialData.set('sn_password','');
+ form.settingsInitialData.set('sn_client_secret','');
+ form.settingsInitialData.set('sn_client_id',app.settings.connections.servicenow?.client_id||'');
+ form.settingsInitialData.set('sn_oauth_scope',app.settings.connections.servicenow?.oauth_scope||'');
+ form.settingsInitialData.set('sn_username',app.settings.connections.servicenow?.username||'');
+ form.settingsInitialData.set('base_servicenow',app.settings.connections.servicenow?.base_url||'');
+ }
+ const edited=e=>{
+  const field=e.target;
+  if(!field.form||!(field.form===form||form.contains(field.form))||!field.name)return;
+  // Ignore background autofill into other fields, including hidden tabs.
+  if(document.activeElement===field||field.matches(':focus-within'))form.settingsEditedFields.add(field.name);
+ };
+ form.addEventListener('input',edited);form.addEventListener('change',edited);
+}
+function settingsDraftData(form){
+ const data=settingsFormData(form),initial=form.settingsInitialData;
+ if(!initial)return data;
+ for(const name of new Set([...data.keys(),...initial.keys()])){
+  if(form.settingsEditedFields.has(name))continue;
+  data.delete(name);for(const value of initial.getAll(name))data.append(name,value);
+ }
+ return data;
+}
+async function saveSettingsPatch(changes,revision){return api('/settings',{revision,changes},'PATCH')}
+function settingsChanges(root,next){
+ const changes={};
+ const put=path=>{let target=changes,source=next;for(const key of path.slice(0,-1)){target=target[key]??={};source=source[key]}target[path.at(-1)]=source[path.at(-1)]};
+ const global={manager_write_enabled:'manager_write_enabled',default_runtime:'default_runtime',timeout:'task_timeout_secs',workflow_parallelism:'workflow_parallelism',source_copy_limit_mib:'source_copy_limit_mib',file_preview_limit_mb:'file_preview_limit_mb',activity_log_page_size:'activity_log_page_size',activity_log_verbosity:'activity_log_verbosity'};
+ const sn={sn_auth:'authentication',sn_username:'username',sn_password:'password',sn_client_id:'client_id',sn_client_secret:'client_secret',sn_oauth_scope:'oauth_scope'};
+ for(const name of root.settingsEditedFields){
+  let match;
+  if(name==='provider_pi'){put(['agents','pi','multi_provider']);put(['agents','pi','provider'])}
+  else if(name==='pi_default_provider')put(['agents','pi','provider']);
+  else if(global[name])put([global[name]]);
+  else if(sn[name])put(['connections','servicenow',sn[name]]);
+  else if((match=name.match(/^(model|effort|key|provider|codemode|base_url)_(codex|claude|pi)$/)))put(['agents',match[2],({key:'api_key'})[match[1]]||match[1]]);
+  else if((match=name.match(/^(base|token|repo|project|username)_(github|azure|servicenow|atlassian)$/)))put(['connections',match[2],({base:'base_url',repo:'repository'})[match[1]]||match[1]]);
+  else if((match=name.match(/^compact_(codex|claude|pi)_(.+)$/)))put(['compaction',match[1],match[2]]);
+ }
+ return changes;
+}
+async function saveSettings(){const root=$('#settings-form');if(root.settingsSaving)return;for(const field of root.querySelectorAll('[name]'))if(root.settingsEditedFields.has(field.name)&&field.reportValidity&&!field.reportValidity())return;const f=settingsDraftData($('#settings-form')),s=structuredClone(app.settings);s.manager_write_enabled=f.has('manager_write_enabled');s.activity_log_verbosity=f.get('activity_log_verbosity');s.activity_log_page_size=Number(f.get('activity_log_page_size'));s.default_runtime=f.get('default_runtime');s.task_timeout_secs=Number(f.get('timeout'));s.workflow_parallelism=Number(f.get('workflow_parallelism'));s.compaction={};for(const rt of ['claude','codex','pi']){s.compaction[rt]={...(app.settings.compaction?.[rt]||{})};for(const field of ['context_window_tokens','threshold_tokens','trigger_percent','reserve_tokens','keep_recent_tokens'])if(f.has('compact_'+rt+'_'+field))s.compaction[rt][field]=Number(f.get('compact_'+rt+'_'+field));}s.compaction.claude.context_window_tokens=0;s.compaction.claude.threshold_tokens=0;s.source_copy_limit_mib=Number(f.get('source_copy_limit_mib'));s.file_preview_limit_mb=Number(f.get('file_preview_limit_mb'));for(const rt of ['codex','claude','pi'])s.agents[rt]={multi_provider:rt==='pi'&&f.get('provider_pi')==='multi',base_url:rt==='pi'?(f.get('base_url_pi')||''):(s.agents[rt]?.base_url||''),model:f.get('model_'+rt),effort:f.get('effort_'+rt),api_key:f.get('key_'+rt),provider:rt==='pi'?(f.get('provider_pi')==='multi'?f.get('pi_default_provider'):f.get('provider_pi')):'anthropic',codemode:rt==='pi'&&f.has('codemode_pi')};for(const p of ['github','azure','servicenow'])s.connections[p]={base_url:f.get('base_'+p),token:f.get('token_'+p),repository:s.connections[p]?.repository||'',project:s.connections[p]?.project||''};s.connections.atlassian={...(s.connections.atlassian||{}),base_url:f.get('base_atlassian')||'',username:f.get('username_atlassian')||'',token:f.get('token_atlassian')||'',repository:app.settings.connections.atlassian?.repository||''};Object.assign(s.connections.servicenow,{authentication:f.get('sn_auth'),username:f.get('sn_username'),password:f.get('sn_password'),client_id:f.get('sn_client_id'),client_secret:f.get('sn_client_secret'),oauth_scope:f.get('sn_oauth_scope')});const activeTab=$('[data-settings-tab][aria-selected="true"]')?.dataset.settingsTab||'agents';try{root.settingsSaving=true;app.settings=await saveSettingsPatch(settingsChanges(root,s),root.settingsRevision);render();await settingsDialog(activeTab);window.dispatchEvent(new Event('settings-saved'));toast('Configurazioni personali salvate')}catch(e){if(root.isConnected)$('#settings-error').textContent=e.message}finally{root.settingsSaving=false}}
 function filePreviewMessage(data){return data.preview_reason==='size'?uiText('Il file supera il limite di anteprima:')+' '+data.preview_limit_mb+' MB. '+uiText('Puoi modificarlo in Configurazioni personali o scaricare il file.'):uiText('Anteprima non disponibile per questo formato. Puoi scaricare il file.')}
 async function artifact(id,mode='preview'){
  const d=await api('/artifacts/'+id),a=d.artifact,versions=app.artifacts.filter(x=>artifactKey(x)===artifactKey(a)).sort((a,b)=>a.version-b.version),preview=a.file?.preview!==false;
@@ -1095,10 +1389,40 @@ async function artifact(id,mode='preview'){
  const location=$('#artifact-location');if(location)location.onclick=()=>location.select();
 }
 
-async function pending(){if(app.reviewRun&&app.reviewRun!==app.run?.id){await loadRun(app.reviewRun)}const p=app.run?.pending;if(!p)return;const q=p.kind==='question'||p.kind==='gate';modal(q?'Decisione richiesta':'Review in attesa',`<p class="small">Run ${esc(app.run.id.slice(0,8))} · ${esc(p.node)} · ${esc(app.user.email)}</p>${p.questions.map(x=>`<p data-no-i18n>${esc(x)}</p>`).join('')}${p.proposal?`<section class="supervisor-proposal"><h3>${icon('bot')}Proposta del supervisore AI</h3><b>${esc(p.proposal.action)}</b><p data-no-i18n>${esc(p.proposal.rationale)}</p><p class="small">Sessione <span data-no-i18n>${esc(p.proposal.session)}</span> · turno ${p.proposal.turn}</p></section>`:''}<label>${q?'Risposta obbligatoria':'Motivazione / note'}<textarea id="decision-answer" rows="5" ${q?'required':''}>${esc(p.proposal?.answer||'')}</textarea></label><p id="decision-error" class="error" role="alert"></p><p class="note">${q?'La risposta riprende il lavoro nella sessione nativa già salvata.':'La decisione sarà registrata con i riferimenti agli artefatti correnti.'}</p>`,q?'<button class="primary" data-action="decide" data-value="answer">Invia risposta</button>':'<button class="danger" data-action="decide" data-value="reject">Rifiuta</button><button class="primary" data-action="decide" data-value="approve">Approva</button>');}
+// Render the exact approved snapshot, including approvals already persisted by older versions.
+function serviceNowApproval(question,p){
+ if(p.kind!=='effect'||!app.run?.workflow.nodes.some(n=>n.id===p.node&&n.kind==='Connection'&&n.provider==='servicenow'))return null;
+ const match=question.match(/^Autorizzare [a-z_]+ su servicenow\? (\{[\s\S]*\}) Controlla target e artefatti nelle impostazioni e nel run\.$/);
+ if(!match)return null;
+ let effect;try{effect=JSON.parse(match[1])}catch{return null}
+ if(!effect||typeof effect.instance!=='string'||typeof effect.method!=='string'||typeof effect.path!=='string'||!effect.body||typeof effect.body!=='object'||Array.isArray(effect.body))return null;
+ const create=effect.method==='POST'&&effect.path==='/api/now/table/incident';
+ const update=effect.method==='PATCH'&&/^\/api\/now\/table\/incident\/[a-zA-Z0-9]+$/.test(effect.path);
+ const resolve=update&&['6',6].includes(effect.body.state);
+ const catalog=effect.method==='POST'&&/^\/api\/sn_sc\/servicecatalog\/items\/[a-zA-Z0-9]+\/order_now$/.test(effect.path);
+ const title=create?'Crea un incidente su ServiceNow':resolve?'Registra la risoluzione dell’incidente':update?'Aggiorna un incidente su ServiceNow':catalog?'Invia una richiesta al catalogo ServiceNow':effect.method==='NONE'?'Restituisci la risposta KB':'Esegui un’azione su ServiceNow';
+ const explanation=create?'Approvando verrà creato un nuovo incidente con i campi riportati qui sotto.':resolve?'Approvando verrà registrata la risoluzione dell’incidente indicato.':update?'Approvando verranno aggiornati i campi dell’incidente indicato.':catalog?'Approvando verrà ordinato l’articolo di catalogo indicato, con le variabili riportate qui sotto.':effect.method==='NONE'?'Il piano restituisce la risposta della KB senza scrivere su ServiceNow.':'Approvando verrà eseguita la richiesta riportata nei dettagli.';
+ const labels={short_description:'Descrizione breve',description:'Descrizione',work_notes:'Note interne',impact:'Impatto',urgency:'Urgenza',state:'Stato',close_code:'Codice di risoluzione',close_notes:'Note di risoluzione',correlation_id:'Riferimento di correlazione',sysparm_quantity:'Quantità',variables:'Variabili del catalogo',answer:'Risposta'};
+ const value=(v,depth=0)=>{
+  if(v&&typeof v==='object'){
+   if(depth>=8)return `<details><summary>${esc(uiText('Altri dettagli'))}</summary><pre data-no-i18n>${esc(JSON.stringify(v,null,2))}</pre></details>`;
+   if(Array.isArray(v))return `<ol>${v.map(x=>`<li>${value(x,depth+1)}</li>`).join('')}</ol>`;
+   return `<dl class="approval-fields">${Object.entries(v).map(([k,x])=>`<div><dt ${labels[k]?'':'data-no-i18n'}>${esc(labels[k]?uiText(labels[k]):k)}</dt><dd>${value(x,depth+1)}</dd></div>`).join('')}</dl>`;
+  }
+  return `<span data-no-i18n class="approval-value">${esc(v===null?'null':String(v))}</span>`;
+ };
+ const node=app.run.workflow.nodes.find(n=>n.id===p.node);
+ if(effect.method==='BATCH'&&Array.isArray(effect.body.items)&&effect.body.items.every(item=>item&&typeof item.request_id==='string'&&typeof item.category==='string'&&typeof item.action==='string')){
+  const actions={create_incident:'Crea o recupera incidente',order_catalog:'Ordina o recupera richiesta',answer_only:'Rispondi dalla KB'};
+  return `<section class="approval-summary" aria-label="${esc(uiText('Riepilogo dell’azione'))}"><h3>${icon('plug')}${esc(uiText('Elabora lotto ITSM'))}</h3><p>${esc(uiText('Ogni ticket viene elaborato separatamente. Quelli già registrati vengono riutilizzati; gli esiti incerti richiedono verifica e non vengono reinviati.'))}</p><dl class="approval-target"><div><dt>${esc(uiText('Istanza ServiceNow'))}</dt><dd data-no-i18n>${esc(effect.instance)}</dd></div><div><dt>${esc(uiText('Namespace stabile del lotto'))}</dt><dd data-no-i18n>${esc(effect.body.namespace)}</dd></div><div><dt>${esc(uiText('Ticket nel lotto'))}</dt><dd data-no-i18n>${effect.body.items.length}</dd></div></dl>${effect.body.items.map(item=>`<article class="approval-batch-item"><h4 data-no-i18n>${esc(item.request_id)} · ${esc(item.category)}</h4><b>${esc(uiText(actions[item.action]||item.action))}</b>${item.status==='blocked'?`<p class="manager-warning">${esc(uiText('Da configurare prima dell’invio'))}: <span>${esc(uiText(item.message||''))}</span></p>`:value(item.effect?.body||{})}</article>`).join('')}<details class="approval-json"><summary>${esc(uiText('Dettagli tecnici · JSON completo'))}</summary><pre data-no-i18n>${esc(JSON.stringify(effect,null,2))}</pre></details></section>`;
+ }
+ return `<section class="approval-summary" aria-label="${esc(uiText('Riepilogo dell’azione'))}"><h3>${icon('plug')}${esc(uiText(title))}</h3><p>${esc(uiText(explanation))}</p><dl class="approval-target"><div><dt>${esc(uiText('Istanza ServiceNow'))}</dt><dd data-no-i18n>${esc(effect.instance)}</dd></div>${update||catalog?`<div><dt>${esc(uiText(catalog?'Articolo di catalogo':'Identificativo incidente'))}</dt><dd data-no-i18n>${esc(effect.path.split('/').at(catalog?-2:-1))}</dd></div>`:''}${node.location?`<div><dt>${esc(uiText('File del piano'))}</dt><dd data-no-i18n>${esc(node.location)}</dd></div>`:''}</dl><h4>${esc(uiText('Campi da inviare'))}</h4>${value(effect.body)}<details class="approval-json"><summary>${esc(uiText('Dettagli tecnici · JSON completo'))}</summary><pre data-no-i18n>${esc(JSON.stringify(effect,null,2))}</pre></details></section>`;
+}
+function approvalQuestions(p){return p.questions.map(question=>serviceNowApproval(question,p)||`<p data-no-i18n>${esc(question)}</p>`).join('')}
+async function pending(){if(app.reviewRun&&app.reviewRun!==app.run?.id){await loadRun(app.reviewRun)}const p=app.run?.pending;if(!p)return;const q=p.kind==='question'||p.kind==='gate';modal(q?'Decisione richiesta':'Review in attesa',`<p class="small">Run ${esc(app.run.id.slice(0,8))} · ${esc(p.node)} · ${esc(app.user.email)}</p>${approvalQuestions(p)}${p.proposal?`<section class="supervisor-proposal"><h3>${icon('bot')}Proposta del supervisore AI</h3><b>${esc(p.proposal.action)}</b><p data-no-i18n>${esc(p.proposal.rationale)}</p><p class="small">Sessione <span data-no-i18n>${esc(p.proposal.session)}</span> · turno ${p.proposal.turn}</p></section>`:''}<label>${q?'Risposta obbligatoria':'Motivazione / note'}<textarea id="decision-answer" rows="5" ${q?'required':''}>${esc(p.proposal?.answer||'')}</textarea></label><p id="decision-error" class="error" role="alert"></p><p class="note">${q?'La risposta riprende il lavoro nella sessione nativa già salvata.':'La decisione sarà registrata con i riferimenti agli artefatti correnti.'}</p>`,q?'<button class="primary" data-action="decide" data-value="answer">Invia risposta</button>':'<button class="danger" data-action="decide" data-value="reject">Rifiuta</button><button class="primary" data-action="decide" data-value="approve">Approva</button>');}
 function reviewHistory(node){const ds=app.decisions.filter(d=>!node||d.node===node).slice().reverse();modal('Registro decisioni',ds.map(d=>`<article class="review-record"><b>${icon(d.actor==='ai'||d.actor==='ai_recommendation'?'bot':'clipboard-check')}${d.actor==='ai'?'Decisione AI':d.actor==='ai_recommendation'?'Proposta AI':'Decisione umana'} · <span data-no-i18n>${esc(d.decision)}</span></b><p data-no-i18n>${esc(d.node)} · ${esc(d.user)}</p>${d.supervisor?`<p data-no-i18n>${esc(d.supervisor.rationale)}</p><p class="small code">${esc(d.supervisor.session)} · turno ${d.supervisor.turn}</p>`:''}<p>${new Date(d.created*1000).toLocaleString(nodoLocale())} · run ${esc(d.run.slice(0,8))}</p><p>${esc(d.answer||'Nessuna nota')}</p><details class="decision-artifacts"><summary><span>Artefatti considerati</span> · ${d.artifacts.length}</summary>${d.artifacts.map(id=>{const a=app.artifacts.find(a=>a.id===id);return a?`<button class="artifact-item" data-action="artifact" data-id="${a.id}">${icon('file-text')} ${esc(a.path)} · v${a.version}</button>`:''}).join('')}</details></article>`).join('')||'<p>Nessuna decisione registrata.</p>');}
 function sessions(){const ss=Object.entries(app.run?.sessions||{});modal('Sessioni native persistenti',ss.map(([binding,s])=>`<article class="session-record"><b>${esc(binding)}</b><p class="small">${esc(s.runtime)} · ${s.turns} turni completati · ${esc(s.model||'Modello predefinito')}</p><code class="code">${esc(s.native_id||'In attesa del primo identificativo')}</code></article>`).join('')||'<p>Le sessioni saranno create al primo turno reale.</p>');}
-function newNode(kind,position=null){app.selectedNodes=[];app.selectedEdge=null;if(kind==='RAG')ragRefresh().then(()=>{if(app.selected)renderInspector()}).catch(e=>toast(e.message));if(app.run)return toast('Torna alla progettazione per aggiungere nodi');const n={id:kind.toLowerCase()+'-'+crypto.randomUUID().slice(0,8),kind,title:'Nuovo '+kind,phase:'Workflow',x:Math.round((120-app.pan.x)/app.zoom)+(app.wf.nodes.length%4)*175,y:Math.round((150-app.pan.y)/app.zoom)+Math.floor(app.wf.nodes.length/4)*190,agent:app.wf.nodes.find(n=>n.kind==='Agent')?.id||'',runtime:'',prompt:'',command:'',mode:'agent_and_human',source_type:'example',source_mode:'direct',provider:'local',operation:'test',outcomes:kind==='Gate'?['pass','rework']:[],max_rework:2};if(position){n.x=Math.round(position.x-58);n.y=Math.round(position.y-44)}if(kind==='Comment'){Object.assign(n,{title:'Commento',phase:'Note',text:'',width:300,height:220,markdown:false,agent:''});if(position){n.x=Math.round(position.x-150);n.y=Math.round(position.y-20)}}if(kind==='Memory')n.agent='';app.wf.nodes.push(n);if(!app.wf.entry&&!['Agent','Source','MCP','RAG','Comment'].includes(kind))app.wf.entry=n.id;app.selected=n.id;dirty();render();if(kind==='Comment')requestAnimationFrame(()=>$('.comment-node[data-id="'+n.id+'"] textarea')?.focus())}
+function newNode(kind,position=null){app.selectedNodes=[];app.selectedEdge=null;if(kind==='RAG')ragRefresh().then(()=>{if(app.selected)renderInspector()}).catch(e=>toast(e.message));if(app.run)return toast('Torna alla progettazione per aggiungere nodi');const n={id:kind.toLowerCase()+'-'+crypto.randomUUID().slice(0,8),kind,title:'Nuovo '+kind,phase:'Workflow',x:Math.round((120-app.pan.x)/app.zoom)+(app.wf.nodes.length%4)*175,y:Math.round((150-app.pan.y)/app.zoom)+Math.floor(app.wf.nodes.length/4)*190,agent:app.wf.nodes.find(n=>n.kind==='Agent')?.id||'',runtime:'',pi_provider:'',pi_base_url:'',prompt:'',command:'',mode:'agent_and_human',source_type:'example',source_mode:'direct',provider:'local',operation:'test',outcomes:kind==='Gate'?['pass','rework']:[],max_rework:2};if(position){n.x=Math.round(position.x-58);n.y=Math.round(position.y-44)}if(kind==='Comment'){Object.assign(n,{title:'Commento',phase:'Note',text:'',width:300,height:220,markdown:false,agent:''});if(position){n.x=Math.round(position.x-150);n.y=Math.round(position.y-20)}}if(kind==='Memory')n.agent='';app.wf.nodes.push(n);if(!app.wf.entry&&!['Agent','Source','MCP','RAG','Comment'].includes(kind))app.wf.entry=n.id;app.selected=n.id;dirty();render();if(kind==='Comment')requestAnimationFrame(()=>$('.comment-node[data-id="'+n.id+'"] textarea')?.focus())}
 function graphEdgeKey(edge){return JSON.stringify([edge.from,edge.to,edge.kind,edge.outcome||''])}
 function highlightGraphEdge(key){
  const edge=key&&currentWorkflow()?.edges.find(e=>graphEdgeKey(e)===key);
@@ -1211,12 +1535,29 @@ function paletteDropAllowed(e){const canvas=$('#graph-canvas'),target=document.e
 $('#palette-items').addEventListener('pointerdown',e=>{const button=e.target.closest('[data-action="add-node"]');if(!button||e.button!==0)return;paletteClickSuppressed=false;e.preventDefault();button.blur();if(app.run||app.view!=='graph')return;cancelEdgeDrag();hideTooltip();paletteDrag={button,kind:button.dataset.kind,pointer:e.pointerId,x:e.clientX,y:e.clientY,moved:false};button.setPointerCapture(e.pointerId)});
 $('#palette-items').addEventListener('pointermove',e=>{if(!paletteDrag||paletteDrag.pointer!==e.pointerId)return;const active=paletteDrag;active.moved ||= Math.hypot(e.clientX-active.x,e.clientY-active.y)>5;if(!active.moved)return;hideTooltip();let preview=document.querySelector('.palette-drag-preview');if(!preview){preview=document.createElement('div');preview.className='palette-drag-preview';preview.setAttribute('aria-hidden','true');preview.innerHTML=icon(icons[active.kind]);document.body.append(preview);document.body.classList.add('dragging-palette')}preview.style.left=e.clientX+'px';preview.style.top=e.clientY+'px';const allowed=paletteDropAllowed(e);preview.classList.toggle('invalid',!allowed);$('#graph-canvas').classList.toggle('palette-drop-ready',allowed)});
 $('#palette-items').addEventListener('pointerup',e=>{if(!paletteDrag||paletteDrag.pointer!==e.pointerId)return;const active=paletteDrag,allowed=paletteDropAllowed(e),position=edgePoint(e);cancelPaletteDrag();if(!active.moved)return;paletteClickSuppressed=true;if(allowed){newNode(active.kind,position);$('#graph-canvas').setAttribute('tabindex','-1');$('#graph-canvas').focus({preventScroll:true})}});
-$('#palette-items').addEventListener('click',e=>{if(paletteClickSuppressed&&e.detail!==0){paletteClickSuppressed=false;e.preventDefault();e.stopPropagation()}});
+// Also cancel native mouse focus: some browsers still focus after pointerdown.
+$('#palette-items').addEventListener('mousedown',e=>{if(e.button===0&&e.target.closest('[data-action="add-node"]'))e.preventDefault()});
+$('#palette-items').addEventListener('click',e=>{if(e.detail!==0)e.target.closest('[data-action="add-node"]')?.blur();if(paletteClickSuppressed&&e.detail!==0){paletteClickSuppressed=false;e.preventDefault();e.stopPropagation()}});
 $('#palette-items').addEventListener('pointercancel',cancelPaletteDrag);
 $('#palette-items').addEventListener('lostpointercapture',e=>{if(paletteDrag?.pointer===e.pointerId)cancelPaletteDrag()});
 window.addEventListener('blur',cancelPaletteDrag);
-$('#auth-form').addEventListener('submit',async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));$('#auth-error').textContent='';$('#auth-submit').disabled=true;try{await api(registerMode?'/auth/register':'/auth/login',b);await boot()}catch(e){$('#auth-error').textContent=e.message}finally{$('#auth-submit').disabled=false}});
-$('#auth-switch').onclick=()=>{registerMode=!registerMode;$('#auth-title').textContent=registerMode?'Crea un account':'Accedi al workspace';$('#auth-submit').textContent=registerMode?'Registrati':'Accedi'};
+const authForm=$('#auth-form');
+for(const type of ['input','change'])authForm.addEventListener(type,event=>{
+ const field=event.target;if(!['email','password'].includes(field.name)||authForm.authAutofillAllowed)return;
+ if(event.isTrusted&&document.activeElement===field&&event instanceof InputEvent&&/^(insertText|insertFromPaste|insertFromDrop|insertCompositionText|insertFromComposition|delete.*|historyUndo|historyRedo)$/.test(event.inputType)){
+  authForm.authDraft??={email:'',password:''};authForm.authDraft[field.name]=field.value;
+ }else restoreAuthField(field);
+});
+authForm.addEventListener('focusin',event=>restoreAuthField(event.target));
+authForm.addEventListener('animationstart',event=>{if(event.animationName==='rightcommit-auth-autofill')restoreAuthField(event.target)});
+$('#auth-autofill').onclick=()=>{const enabled=!authForm.authAutofillAllowed;if(!enabled)resetAuthForm();else configureAuthAutofill(true);authForm.elements.email.focus()};
+authForm.addEventListener('submit',async event=>{
+ event.preventDefault();$('#auth-error').textContent='';const body=authCredentials(event.target);if(!body)return;
+ $('#auth-submit').disabled=true;
+ try{await api(registerMode?'/auth/register':'/auth/login',body);registerMode=false;authInfo.setup_required=false;updateAuthMode();await boot()}
+ catch(error){$('#auth-error').textContent=error.message}finally{$('#auth-submit').disabled=false}
+});
+$('#auth-switch').onclick=()=>{registerMode=!registerMode;updateAuthMode()};
 $('#workflow-select').onclick=()=>{const menu=$('#workflow-topic-menu');menu.hidden=!menu.hidden;$('#workflow-select').setAttribute('aria-expanded',String(!menu.hidden))};
 document.addEventListener('click',e=>{if(!e.target.closest('.workflow-topic-picker'))closeWorkflowMenu()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#workflow-topic-menu').hidden){closeWorkflowMenu();$('#workflow-select').focus()}});
@@ -1229,7 +1570,25 @@ $('#save').onclick=()=>saveWorkflow().then(()=>toast('Workflow salvato')).catch(
 $('#validate').onclick=()=>api('/workflows/validate',currentWorkflow()).then(()=>toast('Grafo valido: collegamenti e handoff coerenti')).catch(e=>toast(e.message));
 $('#settings').onclick=()=>settingsDialog().catch(e=>toast(e.message));$('#account').onclick=()=>toggleAccountMenu();
 $('#execution-policy').onclick=policyDialog;
-$('#execute').onclick=async()=>{try{if(app.editBase){await previewRevision();return}if(app.run&&app.run.status==='running')return; if(!app.run)await saveWorkflow();app.runs=await api('/runs');modal('Avvia esecuzione reale',`<p class="note">I nodi invocheranno agenti reali usando le tue credenziali. Le cartelle in /sources seguono la modalità scelta nel nodo: modifica permanente o copia. I repository remoti vengono sempre clonati nel workspace. Scegli come gestire review e domande per questa esecuzione.</p><form id="run-form">${policyFields(app.run?.execution||app.wf.execution)}<label>Richiesta e contesto aggiuntivo<textarea name="input" rows="3"></textarea></label>${select('Base del repository','base_run','',[['','Source configurato nel workflow'],...app.runs.filter(r=>r.status==='completed').map(r=>[r.id,r.name+' · '+r.id.slice(0,8)])])}</form>`,'<button class="primary" data-action="start-run">Avvia con agenti reali</button>')}catch(e){toast(e.message)}};
+async function executionWorkflow(){
+ if(!app.run){await saveWorkflow();return structuredClone(app.wf)}
+ const id=app.run.workflow.id,workflows=await api('/workflows');
+ const workflow=workflows.find(w=>w.id===id);
+ if(!workflow)throw Error('Il workflow di questa run non è più disponibile. Duplica la run per creare un nuovo workflow.');
+ if(!workflow.nodes.length)throw Error('Il workflow salvato è vuoto. Aggiungi i nodi in progettazione oppure duplica la run per recuperarli.');
+ return structuredClone(workflow);
+}
+async function runNowDialog(){
+ try{
+  if(app.editBase){await previewRevision();return}
+  if(app.run&&app.run.status==='running')return;
+  const owner=app.user?.id,context=currentWorkflow()?.id,runId=app.run?.id;
+  const workflow=await executionWorkflow();app.runs=await api('/runs');
+  if(owner!==app.user?.id||context!==currentWorkflow()?.id||runId!==app.run?.id)return;
+  modal('Avvia workflow',`<p>Workflow: <strong data-no-i18n>${esc(workflow.name)}</strong></p>${app.run?'<p class="note">La nuova esecuzione usa la versione salvata di questo workflow. La run precedente resta invariata.</p>':''}<p class="note">Il workflow userà gli agenti e le connessioni configurati. Le cartelle in /sources seguono la modalità scelta nel nodo: modifica permanente o copia. I repository remoti vengono sempre clonati nel workspace. Scegli come gestire review e domande per questa esecuzione.</p><form id="run-form">${policyFields(app.run?.execution||workflow.execution)}<label>Richiesta e contesto aggiuntivo<textarea name="input" rows="3"></textarea></label>${select('Base del repository','base_run','',[['','Source configurato nel workflow'],...app.runs.filter(r=>r.status==='completed').map(r=>[r.id,r.name+' · '+r.id.slice(0,8)])])}</form>`,'<button class="primary" data-action="start-run">Avvia</button>');
+  $('#run-form').workflowToRun=workflow;$('#run-form').executionOwner=owner;
+ }catch(e){toast(e.message)}
+}
 $('#stop').onclick=async()=>{const id=app.run.id;$('#stop').disabled=true;try{await api('/runs/'+id+'/stop',{});toast('Run interrotta');if(app.run?.id===id)await refreshRun();}catch(e){toast(e.message);}finally{$('#stop').disabled=false;}};
 $('#pause').onclick=()=>api('/runs/'+app.run.id+'/pause',{}).then(()=>toast('Pausa richiesta al termine del turno attivo')).catch(e=>toast(e.message));
 $('#resume').onclick=async()=>{if(['failed','interrupted'].includes(app.run.status)&&!(await appConfirm({title:'Riprendi esecuzione',message:'Il turno precedente può avere modificato file o sistemi esterni. Hai verificato gli effetti e vuoi riprenderlo nella stessa sessione?',accept:'Riprendi nella stessa sessione'})))return;try{await api('/runs/'+app.run.id+'/start',{acknowledge:true});await refreshRun()}catch(e){toast(e.message)}};
@@ -1307,7 +1666,10 @@ document.addEventListener('input',e=>updateInspectorField(e.target));
 document.addEventListener('focusout',e=>{if(!app.run&&e.target.form?.id==='node-form'&&e.target.form.isConnected){updateInspectorField(e.target);renderGraph();renderList()}});
 document.addEventListener('change',e=>updateInspectorField(e.target));
 document.addEventListener('submit',e=>{if(e.target.id==='node-form'){e.preventDefault();if(app.run)return;captureInspectorFields();saveWorkflow().catch(error=>toast(error.message))}});
-document.addEventListener('change',e=>{if(e.target.matches('#node-form [name=provider]')){const f=e.target.form,n=currentWorkflow().nodes.find(n=>n.id===app.selected);f.twgCommand=f.elements.command?.value??f.twgCommand??n.command;$('#connection-fields').innerHTML=connectionFields({...n,provider:e.target.value,command:f.twgCommand});captureInspectorFields()}if(e.target.matches('#node-form [name=source_type]')){$('#source-mode-fields').hidden=e.target.value!=='folder';loadSourceFolderOptions(e.target.form)}if(e.target.matches('#node-form [name=source_mode]')&&e.target.value==='copy'&&e.target.form.elements.location.value){const form=e.target.form;confirmSourceCopy({location:form.elements.location.value}).then(ok=>{if(!ok){e.target.value='direct';updateInspectorField(e.target)}}).catch(error=>{e.target.value='direct';updateInspectorField(e.target);toast(error.message)})}if(e.target.id==='artifact-version')artifact(e.target.value).catch(e=>toast(e.message))});
+document.addEventListener('change',e=>{
+ if(e.target.matches('#node-form [name=operation]')){const n=currentWorkflow().nodes.find(n=>n.id===app.selected);if(n?.kind==='Connection'&&n.provider==='github'){captureInspectorFields();if(n.operation==='api_request'){n.api_method||='GET';n.api_path||='/repos/{owner}/{repo}';n.api_encoding||='json';dirty()}renderInspector();return}}
+ if(e.target.matches('#node-form [name=api_endpoint]')){const n=currentWorkflow().nodes.find(n=>n.id===app.selected),endpoint=(window.githubApiCatalog||[]).find(x=>x.id===e.target.value);captureInspectorFields();if(n&&endpoint){applyGithubEndpoint(n,endpoint)}return}
+ if(e.target.matches('#node-form [name=runtime],#node-form [name=pi_provider]')){const node=currentWorkflow().nodes.find(node=>node.id===app.selected);if(node?.kind==='Agent'){captureInspectorFields();renderInspector();return}}if(e.target.matches('#node-form [name=provider]')){const f=e.target.form,n=currentWorkflow().nodes.find(n=>n.id===app.selected);captureInspectorFields();f.twgCommand=f.elements.command?.value??f.twgCommand??n.command;$('#connection-fields').innerHTML=connectionFields({...n,provider:e.target.value,command:f.twgCommand});captureInspectorFields();renderGraph();renderInspector()}if(e.target.matches('#node-form [name=source_type]')){$('#source-mode-fields').hidden=e.target.value!=='folder';loadSourceFolderOptions(e.target.form)}if(e.target.matches('#node-form [name=source_mode]')&&e.target.value==='copy'&&e.target.form.elements.location.value){const form=e.target.form;confirmSourceCopy({location:form.elements.location.value}).then(ok=>{if(!ok){e.target.value='direct';updateInspectorField(e.target)}}).catch(error=>{e.target.value='direct';updateInspectorField(e.target);toast(error.message)})}if(e.target.id==='artifact-version')artifact(e.target.value).catch(e=>toast(e.message))});
 document.addEventListener('click',async e=>{const b=e.target.closest('[data-action]');if(!b||suppressClick)return;try{switch(b.dataset.action){
 case 'import-workflow':importWorkflowDialog();break;
 case 'empty-workflow':emptyWorkflowDialog();break;
@@ -1318,8 +1680,9 @@ case 'save-template':await createTemplateWorkflow(b.dataset.templateId);break;
 case 'decision-history':reviewHistory();break;
 case 'toggle-external-writes':{const enabled=b.getAttribute('aria-checked')!=='true';b.setAttribute('aria-checked',String(enabled));b.closest('.execution-policy-fields').querySelector('[name=allow_external_writes]').value=String(enabled);break;}
 case 'save-execution-policy':{const f=$('#execution-policy-form');if(app.run||!f.reportValidity())break;app.wf.execution=readPolicy(f);dirty();closeModal();render();break;}
+case 'github-api-catalog':showGithubCatalog();break;
 case 'twg-setup':twgSetup();break;
-case 'twg-check':await twgCheck(b);break;
+case 'twg-check':await twgCheck(b);break;case 'atlassian-check':await testAtlassian(b);break;case 'twg-login':await loginAtlassian(b);break;
 case 'save-inspector':if(!app.run){b.disabled=true;try{await saveWorkflow();toast('Workflow salvato')}finally{b.disabled=false}}break;
 case 'close-dialog':closeModal();break;case 'close-inspector':app.selected=null;render();break;
 case 'filter-steps':if(stepFilters.some(f=>f.id===b.dataset.filter)){app.stepFilter=b.dataset.filter;renderGraph();renderList()}break;
@@ -1343,14 +1706,14 @@ case 'continue-run-node':{
 case 'clear-node-selection':setNodeSelection([]);render();break;case 'delete-selected-nodes':deleteSelectedNodes();break;case 'edit-run-workflow':if(app.run)selectWorkflow(app.run.workflow.id);break;case 'delete-node':deleteNode(b.dataset.id);break;
 case 'set-entry':app.wf.entry=b.dataset.id;dirty();toast('Ingresso impostato');break;
 case 'create-workflow':{leaveDraftContext();app.editBase=null;const name=$('[name="workflow_name"]').value.trim();if(!name)throw Error('Nome obbligatorio');disconnect();app.run=null;app.wf={id:crypto.randomUUID(),name,description:'',entry:'',nodes:[],edges:[]};app.selected=null;await saveWorkflow();render();closeModal();break;}
-case 'clear-key':{const field=$(`[name="${b.dataset.field}"]`);field.value='__CLEAR__';field.removeAttribute('placeholder')}
-toast('La credenziale sarà rimossa al salvataggio');break;case 'password-dialog':await settingsDialog('general');break;case 'change-password':await changeAccountPassword();break;case 'compact-session':await compactSession();break;case 'settings':await settingsDialog();break;case 'save-settings':await saveSettings();break;
+case 'clear-key':{const field=$(`[name="${b.dataset.field}"]`);field.value='__CLEAR__';(field.closest('[data-settings-root]')||field.form)?.settingsEditedFields?.add(field.name);field.removeAttribute('placeholder')}
+toast('La credenziale sarà rimossa al salvataggio');break;case 'password-dialog':await settingsDialog('general');break;case 'change-password':await changeAccountPassword();break;case 'compact-session':await compactSession();break;case 'settings':await settingsDialog();break;case 'configure-agents':await settingsDialog('agents');break;case 'pi-check':await checkPiConnection(b);break;case 'servicenow-check':{const form=b.closest('form'),url=$('[name=base_servicenow]',form);if(!url.reportValidity())break;const status=$('[data-servicenow-status]');if(status)status.textContent=uiText('Verifica connessione in corso…');const draft=serviceNowDraft(form);b.disabled=true;try{const result=await api('/connections/servicenow/status',draft,'POST');if(result.connected&&JSON.stringify(serviceNowDraft(form))===JSON.stringify(draft))for(const name of ['base_servicenow','sn_auth','sn_username','sn_password','token_servicenow','sn_client_id','sn_client_secret','sn_oauth_scope'])(form.closest('[data-settings-root]')||form).settingsEditedFields?.add(name);if(status?.isConnected)status.textContent=result.message}catch(e){if(status?.isConnected)status.textContent=e.message}finally{if(b.isConnected)b.disabled=false}break;}case 'save-settings':await saveSettings();break;
 case 'import-host':await api('/auth/import-host',{runtime:b.dataset.runtime});toast('Login locale importato solo per questo account');await settingsDialog();break;
 case 'environment':await showEnvironment();break;
 case 'capabilities':await showCliCapabilities();break;
 case 'admin-user-suspend':case 'admin-user-activate':case 'admin-user-remove':await changeAdminUser(b);break;case 'admin-users-refresh':await loadAdminUsers();break;case 'add-user':await createAccountUser();break;
 case 'logout':closeAccountMenu();app.editBase=null;await api('/auth/logout',{});app.run=null;showAuth();break;
-case 'start-run':{if(!$('#run-form').reportValidity())break;b.disabled=true;const f=Object.fromEntries(new FormData($('#run-form')));let index=0,allowLargeCopy=false;for(const n of app.wf.nodes.filter(n=>n.kind==='Source')){if(n.source_type==='folder'&&(n.source_mode||'copy')!=='direct'&&!(index===0&&f.base_run)){if(!await confirmSourceCopy(n,()=>{allowLargeCopy=true})){b.disabled=false;return}}index++}const r=await api('/runs',{workflow_id:app.wf.id,input:f.input,base_run:f.base_run||null,allow_large_source_copy:allowLargeCopy,execution:readPolicy($('#run-form'))});closeModal();await loadRun(r.id);logs(true);break;}
+case 'start-run':{const form=$('#run-form');if(!form.reportValidity())break;const workflow=form.workflowToRun;if(!workflow||form.executionOwner!==app.user?.id)throw Error('Accedi per continuare');b.disabled=true;const f=Object.fromEntries(new FormData(form));let index=0,allowLargeCopy=false;for(const n of workflow.nodes.filter(n=>n.kind==='Source')){if(n.source_type==='folder'&&(n.source_mode||'copy')!=='direct'&&!(index===0&&f.base_run)){if(!await confirmSourceCopy(n,()=>{allowLargeCopy=true})){b.disabled=false;return}}index++}const r=await api('/runs',{workflow_id:workflow.id,locale:nodoLocale().startsWith('it')?'it':'en',input:f.input,base_run:f.base_run||null,allow_large_source_copy:allowLargeCopy,execution:readPolicy(form)});closeModal();await loadRun(r.id);logs(true);break;}
 case 'load-run':closeModal();await loadRun(b.dataset.id);break;
 case 'child-runs':showRunFamily();break;
 case 'save-note':await api('/runs/'+app.run.id+'/note',{text:$('#run-note').value});closeModal();await refreshRun();toast('Chiarimento registrato. Riprendi quando sei pronto.');break;case 'pending':pending();break;
@@ -1434,7 +1797,7 @@ async function deleteWorkflowById(wid){
  try{
   const summary=await api('/workflows/'+encodeURIComponent(wid)+'/deletion');
   if(summary.active){toast('Metti in pausa le esecuzioni attive e attendi la risposta del project manager.');return}
-  const message=uiText('Vuoi eliminare questo workflow?')+'\n'+workflow.name+'\n\n'+uiText('Esecuzioni collegate:')+' '+summary.runs+'\n'+uiText('Artefatti e versioni:')+' '+summary.artifacts+'\n'+uiText('Conversazioni manager:')+' '+(summary.manager_chats||0)+'\n\n'+uiText('Verranno eliminati il workflow, tutte le sue esecuzioni, i workspace, gli artefatti, i log e le sessioni locali associate. Questa operazione non può essere annullata.')+'\n\n'+uiText('I file e le cartelle in /sources vengono sempre conservati.');
+  const message=uiText('Vuoi eliminare questo workflow?')+'\n'+workflow.name+'\n\n'+uiText('Esecuzioni collegate:')+' '+summary.runs+'\n'+uiText('Artefatti e versioni:')+' '+summary.artifacts+'\n'+uiText('Conversazioni manager:')+' '+(summary.manager_chats||0)+'\n'+uiText('Pianificazioni collegate:')+' '+(summary.schedules||0)+'\n\n'+uiText('Verranno eliminati il workflow, tutte le sue esecuzioni, i workspace, gli artefatti, i log e le sessioni locali associate. Questa operazione non può essere annullata.')+'\n\n'+uiText('I file e le cartelle in /sources vengono sempre conservati.');
   if(!(await appConfirm({title:'Elimina workflow',message,accept:'Elimina definitivamente',danger:true})))return;
   const state=draftSaves.get(draftPrefix()+wid);if(state){state.discarded=true;clearTimeout(state.timer);if(state.promise)await state.promise.catch(()=>{})}
   let result;try{result=await api('/workflows/'+encodeURIComponent(wid),{acknowledge:true,run_ids:summary.run_ids},'DELETE')}catch(error){if(state){state.discarded=false;if(state.version>state.saved)scheduleDraft(state)}throw error}
@@ -1467,22 +1830,24 @@ window.addEventListener('nodo-language-changed',()=>{if(app.user)renderActivityL
 // Keep resize grips outside panel contents, which are replaced on render.
 (()=>{
  const container=$('#right-panels');
- const panels=[['inspector',330,320],['manager-panel',380,350]].map(([id,desktop,compact])=>{
+ const panels=[['inspector-stack',330,320],['manager-panel',380,350]].map(([id,desktop,compact])=>{
   const panel=document.getElementById(id),grip=document.createElement('div');
   grip.className='right-panel-resizer';grip.tabIndex=0;
   grip.setAttribute('role','separator');grip.setAttribute('aria-orientation','vertical');
   grip.setAttribute('aria-controls',id);
-  grip.setAttribute('aria-label',id==='inspector'?'Ridimensiona inspector':'Ridimensiona chat');
+  grip.setAttribute('aria-label',id==='inspector-stack'?'Ridimensiona inspector':'Ridimensiona chat');
   panel.before(grip);
+  const storageKey=id==='inspector-stack'?'nodo.inspectorStackWidth':null;
   let preferred=null;
+  if(storageKey)try{const saved=Number(localStorage.getItem(storageKey));if(Number.isFinite(saved)&&saved>0)preferred=saved}catch{}
   const bounds=()=>{const base=innerWidth<=1000?compact:desktop,min=Math.min(base,innerWidth<=550?innerWidth-28:base);return {min,max:Math.max(min,Math.floor(innerWidth/2))}};
   const apply=width=>{
    const {min,max}=bounds(),value=Math.max(min,Math.min(max,width??min));
    panel.style.setProperty('--right-panel-width',value+'px');
    grip.setAttribute('aria-valuemin',min);grip.setAttribute('aria-valuemax',max);grip.setAttribute('aria-valuenow',value);
-   grip.hidden=panel.hidden;
+   grip.hidden=panel.hidden;return value;
   };
-  const resize=width=>{preferred=width;apply(width)};
+  const resize=width=>{preferred=apply(width);if(storageKey)try{localStorage.setItem(storageKey,String(preferred))}catch{}};
   grip.addEventListener('pointerdown',event=>{
    if(event.button!==0)return;
    event.preventDefault();grip.focus();
@@ -1497,9 +1862,48 @@ window.addEventListener('nodo-language-changed',()=>{if(app.user)renderActivityL
    const next={ArrowLeft:width+step,ArrowRight:width-step,Home:min,End:max}[event.key];
    if(next===undefined)return;event.preventDefault();resize(next);
   });
-  grip.addEventListener('dblclick',()=>{preferred=null;apply(null)});
+  grip.addEventListener('dblclick',()=>{preferred=null;if(storageKey)try{localStorage.removeItem(storageKey)}catch{}apply(null)});
   new MutationObserver(()=>apply(preferred)).observe(panel,{attributes:true,attributeFilter:['hidden']});
   apply(preferred);return ()=>apply(preferred);
  });
  window.addEventListener('resize',()=>panels.forEach(update=>update()));
+})();
+
+// Persist the artifacts height independently from the selected node.
+(()=>{
+ const stack=$('#inspector-stack'),panel=$('#artifacts-panel'),grip=document.createElement('div');
+ const storageKey='nodo.artifactsHeightRatio';let preferred=null;
+ try{const saved=localStorage.getItem(storageKey),ratio=Number(saved);if(saved==='collapsed')preferred='collapsed';else if(Number.isFinite(ratio)&&ratio>0&&ratio<1)preferred=ratio}catch{}
+ grip.className='artifacts-height-resizer';grip.tabIndex=0;grip.setAttribute('role','separator');
+ grip.setAttribute('aria-orientation','horizontal');grip.setAttribute('aria-controls','artifacts-panel');grip.setAttribute('aria-label','Ridimensiona altezza artefatti');panel.before(grip);
+ const bounds=()=>{
+  const total=stack.clientHeight;if(!total)return null;
+  panel.style.flex='';
+  const defaultHeight=panel.getBoundingClientRect().height,min=parseFloat(getComputedStyle(panel).minHeight)||60,max=Math.max(min,total-grip.offsetHeight-56);
+  return {total,min,max,defaultHeight};
+ };
+ const apply=(height,save=false)=>{
+  const limits=bounds();if(!limits)return;
+  const value=Math.max(limits.min,Math.min(limits.max,height??(preferred===null?limits.defaultHeight:preferred==='collapsed'?limits.min:preferred*limits.total)));
+  panel.style.flex=`0 0 ${value}px`;
+  panel.classList.toggle('artifacts-title-only',value<=limits.min+1);
+  grip.setAttribute('aria-valuemin',Math.round(limits.min));grip.setAttribute('aria-valuemax',Math.round(limits.max));grip.setAttribute('aria-valuenow',Math.round(value));
+  if(save){preferred=value<=limits.min+1?'collapsed':value/limits.total;try{localStorage.setItem(storageKey,String(preferred))}catch{}}
+ };
+ grip.addEventListener('pointerdown',event=>{
+  if(event.button!==0)return;event.preventDefault();grip.focus();
+  const start=event.clientY,height=panel.getBoundingClientRect().height;
+  grip.setPointerCapture(event.pointerId);document.body.classList.add('resizing-artifacts-height');
+  const move=e=>apply(height+start-e.clientY,true);
+  const end=()=>{grip.removeEventListener('pointermove',move);grip.removeEventListener('lostpointercapture',end);document.body.classList.remove('resizing-artifacts-height')};
+  grip.addEventListener('pointermove',move);grip.addEventListener('lostpointercapture',end);
+ });
+ grip.addEventListener('keydown',event=>{
+  const limits=bounds();if(!limits)return;
+  apply();const height=panel.getBoundingClientRect().height,step=event.shiftKey?50:10;
+  const next={ArrowUp:height+step,ArrowDown:height-step,Home:limits.min,End:limits.max}[event.key];
+  if(next===undefined)return;event.preventDefault();apply(next,true);
+ });
+ grip.addEventListener('dblclick',()=>{preferred=null;try{localStorage.removeItem(storageKey)}catch{}apply()});
+ new ResizeObserver(()=>apply()).observe(stack);
 })();

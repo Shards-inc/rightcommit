@@ -353,7 +353,7 @@ mod catalog_tests {
     #[test]
     fn templates_are_valid_and_independent_from_seeded_workflows() {
         let templates = super::catalog();
-        assert_eq!(templates.len(), 11);
+        assert_eq!(templates.len(), 23);
         let mut ids = std::collections::HashSet::new();
         for t in templates {
             assert!(ids.insert(t.id.clone()));

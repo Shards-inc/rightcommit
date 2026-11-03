@@ -954,7 +954,8 @@ mod tests {
         r.sessions.insert(
             "author".into(),
             NativeSession {
-                runtime: "pi".into(),
+                provider: String::new(), base_url: String::new(),
+runtime: "pi".into(),
                 native_id: sid.clone(),
                 turns: 1,
                 model: "alias".into(),
@@ -1007,7 +1008,8 @@ mod tests {
         r.sessions.insert(
             "author".into(),
             NativeSession {
-                runtime: "codex".into(),
+                provider: String::new(), base_url: String::new(),
+runtime: "codex".into(),
                 native_id: sid.clone(),
                 model: "gpt-test".into(),
                 turns: 1,

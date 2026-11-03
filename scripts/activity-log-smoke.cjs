@@ -33,6 +33,13 @@ const longDetail='printf a deliberately long command with more than thirty chara
 const preview=await page.evaluate(detail=>activityMessage({kind:'activity',text:JSON.stringify({phase:'end',runtime:'claude',tool:'Bash',detail})}),longDetail);
 assert(preview.includes(' · '+longDetail.slice(0,30)+'…'));assert(!preview.includes('second line'));
 assert.equal(await page.evaluate(()=>activityDetail('😀'.repeat(31))), '😀'.repeat(30)+'…');
+// Preview applies only to tool details; diagnostics and agent responses stay complete.
+for(const kind of ['error','output','restart']){
+ assert.equal(await page.evaluate(({kind,text})=>activityMessage({kind,text}),{kind,text:longDetail}),longDetail);
+}
+assert((await page.evaluate(detail=>activityMessage({kind:'activity',text:JSON.stringify({phase:'error',runtime:'pi',tool:'rag_status',detail})}),longDetail)).includes(longDetail));
+assert((await page.evaluate(message=>activityMessage({kind:'compaction',text:JSON.stringify({phase:'error',runtime:'pi',message})}),longDetail)).includes(longDetail));
+assert.equal(await page.evaluate(summary=>activityMessage({kind:'output',text:'<nodo_result>'+JSON.stringify({summary})+'</nodo_result>'}),longDetail),longDetail);
 await page.evaluate(()=>settingsDialog('activity'));
 await page.locator('[name="activity_log_page_size"]').fill('3');
 await page.locator('[name="activity_log_verbosity"]').selectOption('full');

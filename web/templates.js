@@ -1,5 +1,11 @@
 /* The shared catalog has explicit locales; never run its content through UI translation. */
 function catalogText(item){const lang=nodoLocale().startsWith('it')?'it':'en',selected=item.locales?.[lang]||{},fallback=item.locales?.[item.source_locale||'en']||item.locales?.it||{};return Object.fromEntries([...new Set([...Object.keys(fallback),...Object.keys(selected)])].map(k=>[k,selected[k]||fallback[k]||'']))}
+function catalogWorkflow(template){
+ const text=catalogText(template),workflow=structuredClone(template.workflow);
+ workflow.name=text.title;workflow.description=text.description;
+ for(const node of workflow.nodes){const translation=text.nodes?.[node.id];if(!translation)continue;for(const field of ['title','prompt','text'])if(typeof translation[field]==='string')node[field]=translation[field]}
+ return workflow;
+}
 let templateManager=null;
 const tmStatus=value=>uiText(({draft:'Bozza',published:'Pubblicato',archived:'Archiviato'})[value]||value);
 const tmTranslation=value=>uiText(({current:'Aggiornate',reviewed:'Verificate',stale:'Da rivedere',missing:'Da completare'})[value]||value);

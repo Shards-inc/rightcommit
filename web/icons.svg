@@ -4,6 +4,9 @@
   <path d="M18 10h3v11h-3z" />
   <circle cx="19.5" cy="5.5" r="1.75" />
 </symbol>
+<symbol id="bot-off" viewBox="0 0 24 24">
+  <path d="m3 3 18 18M12 8V4H8M8 8H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12M12 8h6a2 2 0 0 1 2 2v6M2 14h2M20 14h2M9 13v2" />
+</symbol>
 <symbol id="bot" viewBox="0 0 24 24">
   <path d="M12 8V4H8" />
   <rect width="16" height="12" x="4" y="8" rx="2" />
@@ -234,4 +237,5 @@
 <symbol id="grip-vertical" viewBox="0 0 24 24"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></symbol>
 <symbol id="move-right" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
 <symbol id="broom" viewBox="0 0 24 24"><path d="m19 3-9 9m-1-2 5 5-5 6-6-6 6-5Zm-3 4 4 4m-2-6 4 4"/></symbol>
+<symbol id="brand-bitbucket" viewBox="0 0 24 24"><path d="M2 3a1 1 0 0 0-1 1.16l3 17a1 1 0 0 0 1 .84h14a1 1 0 0 0 1-.84l3-17A1 1 0 0 0 22 3Zm7 6h6l-1 7h-4Z" fill-rule="evenodd"/></symbol>
 </svg>
