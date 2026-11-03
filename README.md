@@ -39,6 +39,8 @@
 
 ---
 
+![rightcommit Agent Studio showing a ServiceNow triage workflow](https://raw.githubusercontent.com/rightcommit/rightcommit/main/.github/assets/rightcommit-demo.png)
+
 ## Why rightcommit
 
 AI coding agents are fast, but "done" often means "I stopped". rightcommit puts the agents
