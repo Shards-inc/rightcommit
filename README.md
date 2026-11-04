@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent.<br>
+  Self-hosted orchestration for Claude Code, Codex and Pi Agent.<br>
   Parallel workflows, full control over every commit, and FinOps that shows exactly what each
   agent and model costs.
 </p>
@@ -56,8 +56,7 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
 
 ## What you get
 
-- **Agentic Workflow Orchestration**\
-  Design, execute, and orchestrate intelligent workflows combining AI agents, enterprise
+- **Agentic Workflow Orchestration.** Design, execute, and orchestrate intelligent workflows combining AI agents, enterprise
   data, and external tools. Expose workflows as A2A-compatible agents, enabling seamless
   interoperability across agentic ecosystems.
 - **Verified outcomes.** Tasks must be ticked, tests run on the server and a second agent
@@ -88,7 +87,7 @@ The local service must be running. Missed occurrences are skipped, and a previou
 
 ## Connections
 
-- **Agents:** Claude Code, Codex and Pi, with an API key, a login or a gateway (Anthropic,
+- **Agents:** Claude Code, Codex and Pi, with an API key or an authorized gateway (Anthropic,
   OpenAI, OpenRouter, AWS Bedrock, Google Vertex, Microsoft Foundry and more).
 - **Services:** GitHub, Azure DevOps, ServiceNow, and Jira, Confluence and Bitbucket through
   the Atlassian CLI. Every write to an outside system waits for your confirmation of the
@@ -98,44 +97,21 @@ The local service must be running. Missed occurrences are skipped, and a previou
 
 ## Who it's for
 
+rightcommit supports individual use and internal organizational deployments with separate
+user accounts. Pi, Claude Code and Codex are available to every user. Read
+[Provider terms and permitted use](PROVIDER_TERMS.md) and
+[Intended use and third-party provider obligations](INTENDED_USE.md). Provider names identify integrations
+and do not imply affiliation or endorsement.
+
 - **Developers** running agents on their own laptop, with their own keys.
-- **Consultants** who reuse a method from client to client, with proof of what was done.
-- **Teams** running it on their own servers, with multiple users, separate keys and
-  workspaces.
-
-### Pi with multiple providers
-
-In **Personal settings → Agents → Pi**, choose **Multi-provider**. Each Pi Agent node then
-gets a **Provider** selector and a model field. The default Pi provider/model apply to the
-manager, supervisor and nodes that inherit personal preferences.
-
-Set provider credentials and parameters in `.env` before starting the app, for example
-`OPENAI_API_KEY`, `XAI_API_KEY`, `AZURE_OPENAI_BASE_URL` or `AWS_REGION`. Native Pi logins
-are also supported. The generic personal API-key field is ignored in Multi-provider mode;
-only variables declared for the selected provider reach its Pi process. See `.env.example`
-for supported variables. Credential files and cloud profiles must be accessible inside the
-container when using Docker.
-
-When running `rightcommit` without Docker, `.env` is loaded automatically from the current
-working directory before services start. Existing process environment variables take
-precedence, including values supplied by Docker Compose. Empty file entries remain unset,
-so optional placeholders keep platform defaults. A missing `.env` is allowed; an
-invalid file stops startup without printing its contents. Parent directories are not searched,
-and MCP utility commands do not load a workspace `.env`.
-
-For local models, set `PI_LOCAL_BASE_URL` and optionally `PI_LOCAL_API_KEY`; an Agent node
-can override the local URL. Provider/model selections and local endpoint overrides are recorded with each
-session, and missing provider configuration is reported before workflow preparation.
-Use Memory nodes when handing work to another Agent, including across providers.
-
-The chat-provider catalog is synchronized with the pinned Pi version in
-`distribution/pi-providers.json`. After updating Pi, regenerate it with
-`node scripts/sync-pi-providers.mjs /path/to/pi-coding-agent` and update the environment
-entries in both Compose files and `.env.example` for any newly introduced providers.
+- **Consultants** applying their methods within a client's authorized deployment, with
+  credentials and provider billing controlled by that client.
+- **Teams** running it on their own servers, with authorized organizational credentials,
+  separate user settings and workspaces.
 
 ## Quickstart
 
-You need [Docker](https://www.docker.com/products/docker-desktop/) and a key or login for at
+You need [Docker](https://www.docker.com/products/docker-desktop/) and an API key or authorized provider configuration for at
 least one agent (Claude Code, Codex or Pi).
 
 **1. Get rightcommit.**
@@ -161,7 +137,7 @@ administrator, and public sign-up closes after that.
 
 **4. Connect an agent.** Open **Personal settings** → **Agents**, add your key and pick a
 model. Keys are encrypted in the database (AES-256-GCM) and never sent back to the browser.
-For logins, gateways, cloud providers and local models, see
+For API keys, gateways, cloud providers and local models, see
 [Configuring the agents](#configuring-the-agents).
 
 **5. Run a workflow.** Press **+**, choose a ready-made workflow (or ask the Project Manager to
@@ -192,10 +168,13 @@ By default the app listens only on `localhost`. Your code and keys stay on your 
 
 ## Configuring the agents
 
+Start with [Provider terms and permitted use](PROVIDER_TERMS.md). All three agents support multiple users;
+provider authorization and credential scope still apply.
+
 | Guide | Covers |
 |---|---|
-| [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) | Claude Code: API key, subscription login, gateways, Bedrock, Vertex, Foundry |
-| [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) | Codex: API key, ChatGPT login, access token, compatible endpoints |
+| [HOW_TO_CONFIGURE_CLAUDECODE.md](HOW_TO_CONFIGURE_CLAUDECODE.md) | Claude Code: API keys, gateways, Bedrock, Vertex, Foundry |
+| [HOW_TO_CONFIGURE_CODEX.md](HOW_TO_CONFIGURE_CODEX.md) | Codex: API keys and compatible provider configuration |
 | [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md) | Pi with Anthropic or OpenAI |
 | [HOW_TO_CONFIGURE_PI_OPENROUTER.md](HOW_TO_CONFIGURE_PI_OPENROUTER.md) | Pi with OpenRouter |
 | [HOW_TO_CONFIGURE_PI_LOCAL.md](HOW_TO_CONFIGURE_PI_LOCAL.md) | Pi with a local model (Ollama, LM Studio, vLLM) |
@@ -223,6 +202,9 @@ rightcommit is [Fair Source](https://fair.io), released under the
   clients are explicitly permitted.
 - Offering a competing commercial product or service is not permitted.
 - Each version becomes available under the **Apache License 2.0** two years after its release.
+
+The permissions above concern rightcommit itself. Any third-party product or service used
+with it remains subject to its own terms and the [supported deployment scope](#intended-use-and-third-party-provider-obligations).
 
 See [fsl.software](https://fsl.software) for background on the license.
 
