@@ -188,7 +188,7 @@ provider authorization and credential scope still apply.
 | [ADD-PI-PACKAGES.md](ADD-PI-PACKAGES.md) | Add packages from pi.dev to the Pi agent |
 | [ADD-OPENSPEC.md](ADD-OPENSPEC.md) | Use OpenSpec in your workflows |
 | [UPDATE-PI-DEFAULT-PACKAGES.md](UPDATE-PI-DEFAULT-PACKAGES.md) | Update the Pi tools rightcommit ships (maintainers) |
-| [How-to Guides](guides/README.md) | Configure access and run workflow examples for ServiceNow (ITSM, catalog Requests and Spec Kit), Atlassian (Jira, Bitbucket and Confluence), and GitHub (issues and CI) |
+| [CONFIGURATION GUIDES](guides/README.md) | Configure access and run workflow examples for ServiceNow (ITSM, catalog Requests and Spec Kit), Atlassian (Jira, Bitbucket and Confluence), and GitHub (issues and CI) |
 
 ## License
 
@@ -226,4 +226,4 @@ Questions and feedback: [hello@rightcommit.com](mailto:hello@rightcommit.com).
 Spec Kit, Rust, Docker and other names and marks belong to their owners. rightcommit is not
 affiliated with them.</sub>
 
-[Guides](guides/README.md) · [Configuring ServiceNow: ITSM classification, catalog Requests and Spec Kit](guides/CONFIGURING_SERVICENOW.md).
+[CONFIGURATION GUIDES](guides/README.md) · [Configuring ServiceNow: ITSM classification, catalog Requests and Spec Kit](guides/CONFIGURING_SERVICENOW.md).
