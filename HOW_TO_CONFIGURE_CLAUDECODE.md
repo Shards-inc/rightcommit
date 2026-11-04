@@ -1,66 +1,47 @@
 # Configuring Claude Code
 
-rightcommit runs Claude Code for you. You only need to give it a way to authenticate.
-Pick **one** of the options below.
+rightcommit runs the official, unmodified Claude Code CLI. The documented configuration
+uses API keys or authorized gateway/cloud credentials for individual or internal organizational
+use. Read [Provider terms](PROVIDER_TERMS.md) and [Intended use](INTENDED_USE.md).
 
-| Option | Who it applies to | Where you set it |
-|---|---|---|
-| [1. Personal API key](#1-personal-api-key) | your account | in the app |
-| [2. Claude subscription login](#2-claude-subscription-login) | your account | one terminal command |
-| [3. Installation-wide variables](#3-installation-wide-variables) | every account | `.env` file or shell |
+## Original vendor CLI
 
-To check which option is in use, open **Personal settings** → **Environment**: the Claude Code
-card shows the method, the provider and where the credential comes from. It does not check
-online that the credential is valid.
+rightcommit uses Claude Code as supplied by Anthropic, installed from the official
+`@anthropic-ai/claude-code` package at the version pinned by the distribution. rightcommit does
+not patch its source code or executables, alter its internal operation, or replace its
+native authentication mechanisms or model-access protocols. The CLI itself handles
+provider authentication and model requests using its supported interfaces.
 
-## 1. Personal API key
+rightcommit orchestrates the original CLI through command-line options, environment
+variables and supported configuration. The application-level rules below determine which
+API key or provider configuration is supplied to each user's process; they do not modify
+the CLI's built-in access mechanisms. Provider agreements, permissions and usage limits
+continue to apply. This statement is not a certification of overall terms compliance.
 
-The simplest option.
+## 1. API key in the app
 
-1. Create a key in the [Claude Console](https://console.anthropic.com/settings/keys).
-2. In rightcommit open **Personal settings** → **Agents** → **Claude Code**.
-3. Paste the key in **Personal API key**, optionally set a **Model** (for example `opus` or
-   `sonnet`; empty = the CLI default) and press **Save**.
+Create an API key in the [Claude Console](https://console.anthropic.com/settings/keys).
+Open **Personal Settings → Agents → Claude Code**, enter the API key and save.
+The full key is encrypted in the database and is not returned by the app.
+Leave the field empty to keep a saved key; use the bin button to remove it.
 
-The key is encrypted in the database and never shown again. Leave the field empty to keep it;
-use the bin icon to remove it.
+With one administrator, that key is used by their Claude Code processes. With multiple
+users, it is also the default for users without their own Claude Code key. A user's own
+key takes precedence. The shared key is never displayed or copied into another user's settings.
 
-## 2. Claude subscription login
+## 2. Configuration through environment variables
 
-Use your Claude Pro or Max plan instead of an API key. Sign in once per account, from a
-terminal in the rightcommit folder (account ID 1 shown here):
+This section applies only to administrator ID 1. Other users do not inherit provider
+credentials, cloud/gateway configuration, endpoints or model settings from the server environment.
+Their shared fallback is exclusively the administrator's API key saved in Personal Settings.
 
-**Docker** (with Podman, write `podman` instead of `docker`):
-
-```sh
-docker compose exec -it --user 20001:20001 -e HOME=/data/users/1 -e CLAUDE_CONFIG_DIR=/data/users/1/.claude rightcommit claude
-```
-
-**Local installation** (from the folder you start rightcommit in):
-
-```sh
-export PATH="$PWD/data/system/tools/bin:$PATH"
-HOME="$PWD/data/users/1" CLAUDE_CONFIG_DIR="$PWD/data/users/1/.claude" claude
-```
-
-In Claude Code type `/login`, choose your Claude account, open the link, paste the code back,
-then type `/exit`. The login is saved in the account's private folder and survives restarts.
-
-For another account, change `1` to its ID and `20001` to 20000 + the ID.
-
-## 3. Installation-wide variables
-
-The operator can set credentials for the whole installation. Every account can use them, but
-their values are never shown in the app.
-
-- **Docker or Podman:** copy `.env.example` to `.env` (next to `compose.yaml`), fill in only
-  what you use, run `chmod 600 .env`, then `docker compose up -d`.
-- **Local installation:** `export` the variables in the shell before starting `rightcommit`.
+For Docker, edit `.env` beside the Compose file, protect it with `chmod 600 .env`, and run
+`docker compose up -d`. For native installations, set the variables before starting the app.
+Use credentials authorized for the organization and intended users.
 
 | Method | Variables |
 |---|---|
 | API key | `ANTHROPIC_API_KEY` |
-| Subscription token (from `claude setup-token`) | `CLAUDE_CODE_OAUTH_TOKEN` |
 | Gateway or proxy | `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, or an `Authorization`, `x-api-key` or `api-key` line in `ANTHROPIC_CUSTOM_HEADERS` |
 | Amazon Bedrock | `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK` or `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` |
 | Bedrock Mantle | `CLAUDE_CODE_USE_MANTLE=1` with AWS credentials as above |
@@ -68,32 +49,21 @@ their values are never shown in the app.
 | Google Vertex AI | `CLAUDE_CODE_USE_VERTEX=1`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS` |
 | Microsoft Foundry | `CLAUDE_CODE_USE_FOUNDRY=1`, `ANTHROPIC_FOUNDRY_RESOURCE`, `ANTHROPIC_FOUNDRY_API_KEY` (or Azure client credentials) |
 
-The full list of supported variables is in `.env.example`. Other AWS, Google and Azure
-variables listed there (profiles, web identity, base URLs) are passed on as well.
 
-`ANTHROPIC_MODEL` and `ANTHROPIC_DEFAULT_OPUS_MODEL` / `_SONNET_` / `_HAIKU_` set default
-models; a model saved in the app takes priority.
+Both Compose files forward the declared CLI variables. File paths for cloud credentials
+and certificates must exist and be readable inside the container. Additional supported
+cloud and model variables are listed in `.env.example`.
 
-## Which credential wins
+## 3. Precedence
 
-rightcommit picks one credential and never falls back to another one silently:
+1. The user's API key in Personal Settings.
+2. The administrator's Claude Code API key in Personal Settings.
+3. For the administrator only, environment configuration: one enabled cloud provider, gateway authentication, or
+   `ANTHROPIC_API_KEY` as appropriate for the selected route.
 
-1. A cloud provider (Bedrock, Mantle, Claude Platform on AWS, Vertex or Foundry). Only one may
-   be on, and it applies to **every account**, even those with a personal key.
-2. An authentication header in `ANTHROPIC_CUSTOM_HEADERS`.
-3. `ANTHROPIC_AUTH_TOKEN`.
-4. `CLAUDE_CODE_OAUTH_TOKEN`.
-5. The account's personal API key.
-6. `ANTHROPIC_API_KEY`.
-7. The account's subscription login.
+An app API key selects direct Anthropic API billing and excludes global cloud/gateway
+credentials and endpoint overrides. The administrator can remove the app key to use environment-based cloud or gateway
+configuration. Model defaults remain configurable in the app and environment.
+Provider permissions, usage policies and billing remain the credential owner's responsibility.
 
-## Good to know
-
-- **Files:** a variable that points to a file (`GOOGLE_APPLICATION_CREDENTIALS`,
-  `AWS_SHARED_CREDENTIALS_FILE`, CA certificates) must use a path that exists **inside the
-  container**. Mount the file in `compose.yaml`, for example
-  `- ./gcp-key.json:/run/secrets/gcp-key.json:ro`, and use `/run/secrets/gcp-key.json`.
-- **Changes to `.env`:** run `docker compose up -d` again. `docker compose restart` does not
-  reload variables.
-- **Proxies:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and `NODE_EXTRA_CA_CERTS` are passed to
-  Claude Code too.
+Changing `.env` requires recreating the container; `docker compose restart` does not reload it.

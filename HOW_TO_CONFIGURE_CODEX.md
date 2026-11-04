@@ -1,96 +1,66 @@
 # Configuring Codex
 
-rightcommit runs Codex for you. You only need to give it a way to authenticate.
-Pick **one** of the options below.
+rightcommit runs the official, unmodified Codex CLI. Supported configuration uses API keys
+or authorized provider configuration for individual or internal organizational use.
+Read [Provider terms](PROVIDER_TERMS.md) and [Intended use](INTENDED_USE.md).
 
-| Option | Who it applies to | Where you set it |
-|---|---|---|
-| [1. Personal API key](#1-personal-api-key) | your account | in the app |
-| [2. ChatGPT login](#2-chatgpt-login) | your account | one terminal command |
-| [3. Installation-wide variables](#3-installation-wide-variables) | every account | `.env` file or shell |
-| [4. Another provider (advanced)](#4-another-provider-advanced) | your account | Codex `config.toml` |
+## Original vendor CLI
 
-To check which option is in use, open **Personal settings** → **Environment**: the Codex card
-shows the method, the provider, where the credential comes from and whether the login file is
-used. It does not check online that the credential is valid.
+rightcommit uses Codex CLI as supplied by OpenAI, installed from the official
+`@openai/codex` package at the version pinned by the distribution. rightcommit does
+not patch its source code or executables, alter its internal operation, or replace its
+native authentication mechanisms or model-access protocols. The CLI itself handles
+provider authentication and model requests using its supported interfaces.
 
-## 1. Personal API key
+rightcommit orchestrates the original CLI through command-line options, environment
+variables and supported configuration. The application-level rules below determine which
+API key or provider configuration is supplied to each user's process; they do not modify
+the CLI's built-in access mechanisms. Provider agreements, permissions and usage limits
+continue to apply. This statement is not a certification of overall terms compliance.
 
-The simplest option.
+## 1. API key in the app
 
-1. Create a key on the [OpenAI platform](https://platform.openai.com/api-keys).
-2. In rightcommit open **Personal settings** → **Agents** → **Codex**.
-3. Paste the key in **Personal API key**, optionally set a **Model** (empty = the CLI default)
-   and press **Save**.
+Create a key on the [OpenAI platform](https://platform.openai.com/api-keys).
+Open **Personal Settings → Agents → Codex**, enter the API key and save.
+The full key is encrypted in the database and is not returned by the app.
+Leave the field empty to retain it; use the bin button to remove it.
 
-The key is encrypted in the database and never shown again. Leave the field empty to keep it;
-use the bin icon to remove it.
+The administrator's saved Codex API key is also the default for other users who have no
+personal Codex key. Each user's own key overrides it. Shared keys are never returned to
+other users or copied into their settings.
 
-## 2. ChatGPT login
+## 2. Configuration through environment variables
 
-Use your ChatGPT plan instead of an API key. Sign in once per account, from a terminal in the
-rightcommit folder (account ID 1 shown here):
+This section applies only to administrator ID 1. Other users do not inherit provider
+credentials, cloud/gateway configuration, endpoints or model settings from the server environment.
+Their shared fallback is exclusively the administrator's API key saved in Personal Settings.
 
-**Docker** (with Podman, write `podman` instead of `docker`):
+Edit `.env` for Docker and recreate the service with `docker compose up -d`. Protect the
+file with `chmod 600 .env`. For native installations, export variables before startup.
 
-```sh
-docker compose exec -it --user 20001:20001 -e HOME=/data/users/1 -e CODEX_HOME=/data/users/1/.codex rightcommit codex login --device-auth
-```
-
-**Local installation** (from the folder you start rightcommit in):
-
-```sh
-export PATH="$PWD/data/system/tools/bin:$PATH"
-HOME="$PWD/data/users/1" CODEX_HOME="$PWD/data/users/1/.codex" codex login --device-auth
-```
-
-Open the link shown, enter the code and confirm. The login is saved in the account's private
-folder (`.codex/auth.json`) and survives restarts.
-
-For another account, change `1` to its ID and `20001` to 20000 + the ID.
-
-## 3. Installation-wide variables
-
-The operator can set credentials for the whole installation. Every account can use them, but
-their values are never shown in the app.
-
-- **Docker or Podman:** copy `.env.example` to `.env` (next to `compose.yaml`), fill in only
-  what you use, run `chmod 600 .env`, then `docker compose up -d`.
-- **Local installation:** `export` the variables in the shell before starting `rightcommit`.
-
-| Variable | Use |
+| Variable | Purpose |
 |---|---|
-| `CODEX_API_KEY` | API key for Codex |
-| `OPENAI_API_KEY` | API key, used when `CODEX_API_KEY` is empty |
-| `CODEX_ACCESS_TOKEN` | access token, used when there is no API key |
-| `OPENAI_BASE_URL` | an OpenAI-compatible endpoint instead of api.openai.com |
+| `CODEX_API_KEY` | Organizational API key for Codex |
+| `OPENAI_API_KEY` | Used when `CODEX_API_KEY` is empty |
+| `OPENAI_BASE_URL` | Authorized OpenAI-compatible endpoint |
 
-## 4. Another provider (advanced)
+Both Compose files forward the declared CLI variables. Custom providers can be selected
+through the user's private `.codex/config.toml`; their own provider configuration and
+agreement apply. AWS variables are forwarded for native provider configuration when no
+app API key is selected. Credential files must be available inside the container.
 
-Codex reads its own `config.toml` from the account's private folder:
-`/data/users/<ID>/.codex/config.toml` with Docker or Podman,
-`data/users/<ID>/.codex/config.toml` with a local installation.
+## 3. Precedence
 
-There you can select another `model_provider`, for example Amazon Bedrock. When this file
-exists, rightcommit also passes the installation's `AWS_*` variables to Codex. Other provider
-variables are not passed, and AWS profiles or SSO need their files inside the container.
-See the Codex documentation for the file format.
+For the default OpenAI provider:
 
-## Which credential wins
+1. The user's Codex API key in Personal Settings.
+2. The administrator's Codex API key in Personal Settings.
+3. For the administrator only, `CODEX_API_KEY`, then `OPENAI_API_KEY` from the environment.
 
-rightcommit picks one credential and never falls back to another one silently:
+An app API key excludes global endpoint overrides. A custom provider explicitly selected
+in the user's native configuration uses that provider's authentication; remove that selection
+to use the default OpenAI route. See the [official authentication documentation](https://learn.chatgpt.com/docs/auth?surface=cli).
 
-1. A non-OpenAI provider selected in `config.toml`, with its own authentication.
-2. The account's personal API key.
-3. `CODEX_API_KEY`, then `OPENAI_API_KEY`.
-4. `CODEX_ACCESS_TOKEN`.
-5. The account's ChatGPT login (`auth.json`).
-
-## Good to know
-
-- **Reasoning:** the **Reasoning** setting is passed to Codex as `model_reasoning_effort`.
-- **Changes to `.env`:** run `docker compose up -d` again. `docker compose restart` does not
-  reload variables.
-- **Proxies:** `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE` and
-  `CODEX_CA_CERTIFICATE` are passed to Codex too. Certificate files must exist inside the
-  container.
+Reasoning is passed as `model_reasoning_effort`. Proxy and certificate variables are listed
+in `.env.example`. Recreate the container after environment changes; a plain restart does
+not reload `.env`.

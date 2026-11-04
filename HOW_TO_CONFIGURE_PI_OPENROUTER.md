@@ -3,6 +3,10 @@
 [OpenRouter](https://openrouter.ai) gives you hundreds of models (Claude, GPT, Gemini, Qwen,
 DeepSeek and more) with one key and one bill.
 
+Pi is available to every user. Use an OpenRouter account or API
+key you are authorized to use, with billing and model access covered by your agreement.
+Read [Provider terms and permitted use](PROVIDER_TERMS.md).
+
 ## Steps
 
 1. Create a key on [openrouter.ai/keys](https://openrouter.ai/keys) and add credit to your
@@ -21,8 +25,8 @@ Pick a model that supports **tool calling**: Pi needs tools to read and edit fil
 - **Installation-wide:** set `OPENROUTER_API_KEY` in `.env` (Docker or Podman, then
   `docker compose up -d`) or in the shell before starting `rightcommit`. It is used by accounts
   without a personal key.
-- **Pi login:** run Pi as shown in [HOW_TO_CONFIGURE_PI.md](HOW_TO_CONFIGURE_PI.md#2-pi-login)
-  and type `/login openrouter`. A Pi login takes priority over the personal key.
+- **Administrator key:** an OpenRouter key saved by the administrator in Pi settings is
+  used by users without a personal key for that same provider and endpoint.
 
 ## Good to know
 

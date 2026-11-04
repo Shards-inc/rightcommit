@@ -1,7 +1,8 @@
 # Configuring Pi
 
 Pi is a multi-provider agent. In rightcommit it can use **Anthropic**, **OpenAI** or
-**OpenRouter**, and, with a small file, a **local model**.
+**OpenRouter**, and, with a small file, a **local model**. Pi is available to every user. Read [Provider terms and permitted use](PROVIDER_TERMS.md)
+before connecting a provider; technical support for a credential is not permission to use it.
 
 | Guide | For |
 |---|---|
@@ -20,39 +21,13 @@ The simplest option.
 4. Paste the key in **Personal API key**, optionally set a **Model** (for example
    `claude-sonnet-5-5`; empty = Pi's default for that provider) and press **Save**.
 
-The key is encrypted in the database and never shown again. Leave the field empty to keep it;
-use the bin icon to remove it.
+The key is encrypted in the database; the full value is not returned by the app. Leave the
+field empty to keep it; use the bin icon to remove it.
 
-## 2. Pi login
+## 2. Environment variables
 
-Pi can also sign in with a provider account, for example a Claude or ChatGPT subscription.
-Sign in once per account, from a terminal in the rightcommit folder (account ID 1 shown here):
-
-**Docker** (with Podman, write `podman` instead of `docker`):
-
-```sh
-docker compose exec -it --user 20001:20001 -e HOME=/data/users/1 -e PI_CODING_AGENT_DIR=/data/users/1/.pi/agent rightcommit pi
-```
-
-**Local installation** (from the folder you start rightcommit in):
-
-```sh
-export PATH="$PWD/data/system/tools/bin:$PATH"
-HOME="$PWD/data/users/1" PI_CODING_AGENT_DIR="$PWD/data/users/1/.pi/agent" pi
-```
-
-In Pi type `/login`, pick the provider and follow the steps (paste the final link or code back
-when asked), then type `/quit`. Then select the same provider in **Pi provider** in the
-app.
-
-> A Pi login **takes priority** over the personal API key. To go back to the key, run Pi again
-> as above and use `/logout`.
-
-For another account, change `1` to its ID and `20001` to 20000 + the ID.
-
-## 3. Installation-wide variables
-
-The operator can set keys for the whole installation, used by accounts without a personal key.
+The operator can set authorized API credentials for the installation, used by accounts
+without a personal key. Only permit users covered by the key owner's provider agreement. Use only credentials authorized for these users and workloads.
 
 - **Docker or Podman:** copy `.env.example` to `.env` (next to `compose.yaml`), fill in only
   what you use, run `chmod 600 .env`, then `docker compose up -d`.
@@ -60,19 +35,21 @@ The operator can set keys for the whole installation, used by accounts without a
 
 | Pi provider | Variables |
 |---|---|
-| Anthropic | `ANTHROPIC_API_KEY`, or `ANTHROPIC_OAUTH_TOKEN` / `ANTHROPIC_AUTH_TOKEN` |
+| Anthropic | `ANTHROPIC_API_KEY` (API billing) |
 | OpenAI | `OPENAI_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 
-`ANTHROPIC_OAUTH_TOKEN` and `ANTHROPIC_AUTH_TOKEN` are used only when the account has no
-personal key and `ANTHROPIC_BASE_URL` is empty: tokens meant for a Claude Code gateway are
-never sent to Anthropic by Pi.
+## 3. Precedence
 
-## Which credential wins
+1. The user's own API key for the selected provider.
+2. The administrator's Pi API key for that same provider and endpoint.
+3. Provider-specific credentials from the environment.
 
-1. The account's Pi login (`/login`).
-2. The account's personal API key.
-3. The installation-wide variable of the selected provider.
+An administrator's key is inherited only for the same Pi provider and endpoint, and only
+when configured in single-provider mode. It is not sent to a different provider or URL.
+In Multi-provider mode the generic personal field is ignored; the administrator's
+single-provider key can still cover that matching provider, while other providers require
+their own environment configuration. Shared keys are never exposed in another user's settings.
 
 ## Tools and options
 

@@ -2,12 +2,17 @@
 
 Pi can use a model that runs on your own computer, with [Ollama](https://ollama.com),
 [LM Studio](https://lmstudio.ai), vLLM or any server with an OpenAI-compatible API. No key and
-no cloud costs, but you need a capable machine: agents send long prompts and need **tool
+no cloud inference charges for this local setup, but you need a capable machine: agents send long prompts and need **tool
 calling**.
 
 The idea: a small `models.json` file points Pi's *OpenAI* provider to your local server, and
 in the app you select *OpenAI* with the local model's name. The example uses Ollama and
 `qwen3-coder:30b`.
+
+This works for individual and organizational installations. Follow the server software and model
+licenses, including their commercial-use restrictions where applicable. “OpenAI-compatible”
+describes the API format; it does not imply OpenAI affiliation or grant provider access.
+See [Provider terms and permitted use](PROVIDER_TERMS.md).
 
 ## 1. Start the model
 
