@@ -39,7 +39,7 @@
 
 ---
 
-![rightcommit Agent Studio showing a ServiceNow triage workflow](https://raw.githubusercontent.com/rightcommit/rightcommit/main/.github/assets/rightcommit-demo.png)
+![rightcommit Agent Studio showing a ServiceNow triage workflow](https://raw.githubusercontent.com/rightcommit/rightcommit/main/.github/assets/rightcommit-demo-page-3.png)
 
 ## Why rightcommit
 
