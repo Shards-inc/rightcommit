@@ -74,7 +74,7 @@ def check(bedrock, oauth=False, gateway=False):
         config = json.loads(subprocess.check_output(
             ['docker', 'compose', 'config', '--format', 'json'], cwd=ROOT, env=env))
         for key in ['OPENAI_API_KEY', 'CLAUDE_CODE_USE_BEDROCK', 'AWS_BEARER_TOKEN_BEDROCK', *MODELS]:
-            assert config['services']['nodo']['environment'][key] == env[key], key
+            assert config['services']['rightcommit']['environment'][key] == env[key], key
         client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
         def api(path, body=None, method=None):
@@ -100,7 +100,7 @@ def check(bedrock, oauth=False, gateway=False):
                          ('pi', 'anthropic', ''), ('pi', 'openai', ''), ('pi', 'openrouter', ''),
                          ('codex', 'anthropic', 'personal-secret'), ('claude', 'anthropic', 'personal-secret')]
                 for i, (runtime, provider, personal) in enumerate(cases):
-                    settings['agents'][runtime].update(provider=provider, api_key=personal)
+                    settings['agents'][runtime].update(provider=provider, api_key=personal, model='offline-fixture-model')
                     settings = api('/settings', settings, 'PUT')
                     wid = f'provider-env-{i}'
                     nodes = [dict(id='source', kind='Source', title='Source', source_type='example'),
@@ -118,7 +118,10 @@ def check(bedrock, oauth=False, gateway=False):
                     assert result['run']['status'] == 'completed', result['run'].get('error')
                     captured = json.loads((tmp / 'data/users/1/tmp/captured-env.json').read_text())
                     assert 'UNRELATED_SECRET' not in captured
-                    if runtime == 'claude' and gateway and not bedrock:
+                    if runtime == 'claude' and personal:
+                        assert captured['ANTHROPIC_API_KEY'] == personal
+                        assert not any(key in captured for key in ['ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_CODE_USE_BEDROCK'])
+                    elif runtime == 'claude' and gateway and not bedrock:
                         assert captured['ANTHROPIC_AUTH_TOKEN'] == 'host-gateway-secret'
                         assert captured['ANTHROPIC_BASE_URL'] == env['ANTHROPIC_BASE_URL']
                         assert captured['ANTHROPIC_MODEL'] == 'gateway-model'

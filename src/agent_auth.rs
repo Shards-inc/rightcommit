@@ -220,10 +220,12 @@ except Exception:print(json.dumps({'config_error':True}))
 }
 pub async fn describe(app: &App, uid: i64, settings: &Settings) -> anyhow::Result<Value> {
     let home = agents::user_home(app, uid)?;
-    let claude_cfg = settings.agents.get("claude").cloned().unwrap_or_default();
-    let codex_cfg = settings.agents.get("codex").cloned().unwrap_or_default();
-    let claude_env = agents::provider_environment_in_home("claude", &claude_cfg, &home);
-    let codex_env = agents::provider_environment_in_home("codex", &codex_cfg, &home);
+    let own_claude = settings.agents.get("claude").cloned().unwrap_or_default();
+    let claude_cfg = agents::effective_agent_config(app, uid, "claude", &own_claude)?;
+    let own_codex = settings.agents.get("codex").cloned().unwrap_or_default();
+    let codex_cfg = agents::effective_agent_config(app, uid, "codex", &own_codex)?;
+    let claude_env = agents::provider_environment_in_home("claude", &claude_cfg, &home, uid);
+    let codex_env = agents::provider_environment_in_home("codex", &codex_cfg, &home, uid);
     let native = native_codex(app, uid, &home, settings).await;
     let mut login = login_file(&home);
     let mut codex = codex(
@@ -233,13 +235,21 @@ pub async fn describe(app: &App, uid: i64, settings: &Settings) -> anyhow::Resul
         &login,
         std::env::var("CODEX_API_KEY").is_ok_and(|v| !v.is_empty()),
     );
+    if own_codex.api_key.is_empty() && !codex_cfg.api_key.is_empty() && codex["method"] == "api_key" {codex["source"] = json!("administrator_api_key");}
     login["active"] = json!(codex["source"] == "login_file");
     // The internal classification is not a public credential field.
     login.as_object_mut().unwrap().remove("kind");
     codex["login_file"] = login;
-    Ok(
-        json!({"claude":claude(&claude_cfg, &claude_env, home.join(".claude/.credentials.json").is_file()),"codex":codex}),
-    )
+    let mut claude = claude(&claude_cfg, &claude_env, home.join(".claude/.credentials.json").is_file());
+    if own_claude.api_key.is_empty() && !claude_cfg.api_key.is_empty() {claude["source"] = json!("administrator_api_key");}
+    for auth in [&mut claude, &mut codex] {
+        auth.as_object_mut().unwrap().remove("login_file");
+        if auth["source"] == "login_file" {auth["source"] = json!("external_configuration");}
+        if ["native_login","chatgpt_login","oauth_token","access_token"].contains(&auth["method"].as_str().unwrap_or("")) {
+            auth["method"] = json!("external_configuration");auth["source"] = json!("external_configuration");
+        }
+    }
+    Ok(json!({"claude":claude,"codex":codex}))
 }
 
 #[cfg(test)]
@@ -346,7 +356,7 @@ mod tests {
         let result = describe(&app, 1, &Settings::default()).await.unwrap();
         assert_eq!(result["codex"]["method"], "aws_credentials");
         assert_eq!(result["codex"]["provider"], "amazon-bedrock-runtime");
-        assert_eq!(result["codex"]["login_file"]["active"], false);
+        assert!(result["codex"].get("login_file").is_none());
         assert!(!result.to_string().contains("private-native-secret"));
         std::fs::write(config, "invalid = \"private-config-secret").unwrap();
         let result = describe(&app, 1, &Settings::default()).await.unwrap();

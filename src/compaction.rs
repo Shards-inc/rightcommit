@@ -272,7 +272,7 @@ fn event(
         &run.id,
         "compaction",
         &run.current,
-        &agents::redact(&v.to_string(), &s),
+        &agents::redact_for_user(app, uid, &v.to_string(), &s),
     );
 }
 #[derive(Deserialize)]
@@ -393,6 +393,8 @@ async fn native(app: &App, uid: i64, run: &Run, session: &NativeSession) -> Resu
         .cloned()
         .unwrap_or_default();
     let rt = session.runtime.as_str();
+    let cfg = agents::effective_agent_config(app, uid, rt, &cfg)?;
+    settings.agents.insert(rt.into(), cfg.clone());
     let mut cmd = agents::command(app, uid, rt, FsPath::new(&run.workspace), &settings)?;
     configure(app, uid, rt, &settings, &mut cmd)?;
     if rt == "pi" {crate::pi_local::configure(app,uid,&settings,&session.model,&mut cmd)?;}
@@ -637,9 +639,11 @@ async fn native(app: &App, uid: i64, run: &Run, session: &NativeSession) -> Resu
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => {
             let text = String::from_utf8_lossy(&diagnostic);
+            let text = agents::redact_for_user(app, uid, &text, &settings);
             let suffix: String = text.chars().take(2000).collect();
+            let error = agents::redact_for_user(app, uid, &error.to_string(), &settings);
             if suffix.is_empty() {
-                Err(error)
+                Err(anyhow::anyhow!(error))
             } else {
                 bail!("{error}: {suffix}")
             }

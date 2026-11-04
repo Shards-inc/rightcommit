@@ -47,7 +47,7 @@ pub(crate) fn configure(
     model: &str,
     command: &mut Command,
 ) -> Result<()> {
-    let mut config = settings.agents.get("pi").cloned().unwrap_or_default();
+    let mut config = agents::effective_agent_config(app, uid, "pi", &settings.agents.get("pi").cloned().unwrap_or_default())?;
     if config.provider != "local" {
         return Ok(());
     }
@@ -96,7 +96,7 @@ pub(crate) fn configure(
     }
     result?;
     command.arg("--extension").arg(path);
-    let key = agents::provider_environment("pi", &config)
+    let key = crate::pi_providers::environment(&config, |name| std::env::var(name).ok())
         .remove("PI_LOCAL_API_KEY")
         .filter(|key| !key.trim().is_empty())
         .unwrap_or_else(|| "local".into());

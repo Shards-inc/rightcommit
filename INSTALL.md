@@ -1,5 +1,9 @@
 # Installing rightcommit with Docker
 
+rightcommit supports one or more users with separate settings and agent homes. Pi, Codex
+and Claude Code are available to every user. Before connecting an agent, read
+[Provider terms and permitted use](PROVIDER_TERMS.md).
+
 The fastest way to run rightcommit, on **macOS, Windows or Linux**. Docker contains
 everything the app needs: you don't install anything else.
 

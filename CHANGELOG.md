@@ -3,6 +3,50 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.2.0] - 2026-11-04
+
+### Added
+
+- Users other than the administrator can use the administrator's saved API key. When a user
+  has no personal key, Claude Code and Codex use the administrator key for the same agent,
+  and Pi uses it when the provider and endpoint match. The key is never shown to the user,
+  and Settings reports **Administrator API key** as the source. A personal key always takes
+  precedence.
+- The Manager has two permanent folders for each account, `manager/mcp-servers` and
+  `manager/projects`. When writing is enabled in **Personal settings → Manager**, it builds
+  requested MCP servers and projects there. They are kept when the workflow is deleted.
+- Pi Agent nodes show the provider they use in the graph.
+- [Provider terms and permitted use](PROVIDER_TERMS.md) and
+  [Intended use](INTENDED_USE.md) explain the supported deployment scope and the provider
+  terms that apply to each agent.
+
+### Changed
+
+- Provider configuration from the environment for Claude Code and Codex (gateways, cloud
+  credentials and tokens in `.env`) applies only to the administrator. Other users need a
+  personal API key or the administrator's saved key. Pi keeps reading provider variables
+  from `.env` for every user.
+- A saved API key for Claude Code or Codex always means direct API billing: gateways, cloud
+  credentials and tokens in the environment no longer override it.
+- API key fields for Claude Code, and for Pi with Anthropic, accept only Anthropic API keys,
+  not Claude subscription tokens. Pi no longer uses `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_OAUTH_TOKEN` or a Claude subscription login. If one is found, Pi stops with an
+  error and leaves the file untouched.
+- Removed the option to import the server's local Claude Code or Codex login into an account
+  (`NODO_ALLOW_HOST_AUTH_IMPORT`). `.env.example` no longer lists `CODEX_ACCESS_TOKEN`,
+  `ANTHROPIC_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN`.
+- Agents and connections use labeled icons instead of provider logos. The footer notes that
+  trademarks belong to their owners.
+- The environment check shows native logins and login files as **External configuration**.
+- The configuration guides for Claude Code, Codex and Pi list every supported Pi provider
+  variable and explain credentials for multiple users.
+
+### Fixed
+
+- Error messages and compaction events shown to other users hide the administrator's key.
+- Changing an Agent node's runtime or Pi provider updates the graph right away.
+- The switch that hides the agent setup notice is centered with its label.
+
 ## [1.1.0] - 2026-11-04
 
 ### Added

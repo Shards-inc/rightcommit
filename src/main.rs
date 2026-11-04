@@ -69,7 +69,6 @@ pub struct App {
     pub bus: broadcast::Sender<(i64, model::Event)>,
     pub isolate: bool,
     pub secure_cookie: bool,
-    pub host_import: bool,
 }
 
 /// Docker mounts the project folder at /sources; a native installation keeps it next to ./data.
@@ -141,7 +140,6 @@ async fn run() -> anyhow::Result<()> {
         bus,
         isolate: std::env::var("NODO_ISOLATE_USERS").is_ok_and(|s| s == "1"),
         secure_cookie: std::env::var("NODO_SECURE_COOKIE").is_ok_and(|s| s == "1"),
-        host_import: std::env::var("NODO_ALLOW_HOST_AUTH_IMPORT").is_ok_and(|s| s == "1"),
     };
     artifacts::recover_legacy_runs(&app)?;
     let mcp = app.mcp.clone();

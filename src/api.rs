@@ -126,7 +126,6 @@ pub fn router(app: App) -> Router {
         .route("/api/auth/logout", axum::routing::post(logout))
         .route("/api/auth/me", axum::routing::get(me))
         .route("/api/auth/password", axum::routing::post(change_password))
-        .route("/api/auth/import-host", axum::routing::post(import_host))
         .route("/api/users", axum::routing::get(crate::users::list).post(add_user))
         .route("/api/users/{id}/status", axum::routing::post(crate::users::set_status))
         .route("/api/users/{id}", axum::routing::delete(crate::users::remove))
@@ -439,7 +438,7 @@ async fn logout(State(a): State<App>, u: User, h: HeaderMap) -> ApiResult<impl I
 }
 async fn me(State(a): State<App>, u: User) -> Json<Value> {
     Json(
-        json!({"id":u.id,"email":u.email,"admin":u.id==1,"host_import":a.host_import&&u.id==1,"isolated":a.isolate}),
+        json!({"id":u.id,"email":u.email,"admin":u.id==1,"host_import":false,"isolated":a.isolate}),
     )
 }
 #[derive(Deserialize)]
@@ -472,40 +471,6 @@ async fn add_user(
     let user = auth::create_user(&a, c.email, c.password).await?;
     Ok(Json(json!({"id":user.id,"email":user.email})))
 }
-#[derive(Deserialize)]
-struct ImportHost {
-    runtime: String,
-}
-async fn import_host(
-    State(a): State<App>,
-    u: User,
-    Json(i): Json<ImportHost>,
-) -> ApiResult<Json<Value>> {
-    if !a.host_import || u.id != 1 {
-        return Err(bad("Import locale disabilitato dall'operatore"));
-    }
-    let server_home = std::env::var("HOME").unwrap_or_default();
-    let home = agents::user_home(&a, u.id)?;
-    let relative = match i.runtime.as_str() {
-        "codex" => ".codex/auth.json",
-        "claude" => ".claude/.credentials.json",
-        _ => return Err(bad("Import disponibile solo per Codex e Claude")),
-    };
-    let src = std::path::Path::new(&server_home).join(relative);
-    let dst = home.join(relative);
-    if !src.is_file() {
-        return Err(bad(
-            "Credenziale locale esportabile assente. Configura una API key personale.",
-        ));
-    }
-    if dst.is_symlink() {
-        return Err(bad("Percorso credenziale non valido"));
-    }
-    std::fs::copy(src, &dst).map_err(anyhow::Error::from)?;
-    crate::store::private(&dst, false)?;
-    agents::own(&a, u.id, &dst)?;
-    Ok(Json(json!({"ok":true,"runtime":i.runtime})))
-}
 fn api_key_preview(key: &str) -> Option<String> {
     if key.is_empty() { return None; }
     let chars: Vec<_> = key.chars().collect();
@@ -524,11 +489,13 @@ fn public_settings(a: &App, u: &User, s: &Settings) -> Value {
     for (rt, cfg) in &s.agents {
         v["agents"][rt]["api_key"] = json!("");
         v["agents"][rt]["api_key_preview"] = json!(api_key_preview(&cfg.api_key));
-        let provider_env = agents::provider_environment_in_home(rt, cfg, &home);
+        let inherited = agents::effective_agent_config(a, u.id, rt, cfg).unwrap_or_else(|_|cfg.clone());
+        let provider_env = agents::provider_environment_in_home(rt, &inherited, &home, u.id);
+        v["agents"][rt]["uses_admin_api_key"] = json!(u.id != 1 && !inherited.api_key.is_empty() && (cfg.api_key.is_empty() || (rt == "pi" && cfg.multi_provider)));
         let cloud = agents::uses_cloud_provider(&provider_env);
         v["agents"][rt]["configured"] = json!(if rt=="pi" {
-            if cfg.multi_provider {crate::pi_providers::any_available(s,&home)}
-            else {crate::pi_providers::available(cfg,&home) && (cfg.provider!="local" || !cfg.model.trim().is_empty())}
+            if cfg.multi_provider {crate::pi_providers::any_available_for_user(a,u.id,s,&home)}
+            else {crate::pi_providers::available(&inherited,&home) && (cfg.provider!="local" || !cfg.model.trim().is_empty())}
         } else {
             agents::has_provider_credentials(&provider_env) || (!cloud && match rt.as_str() {
                 "codex"=>home.join(".codex/auth.json").is_file() || (home.join(".codex/config.toml").is_file()&&home.join(".aws/credentials").is_file()),
@@ -645,6 +612,9 @@ fn validate_settings(s: &mut Settings, old: &Settings) -> anyhow::Result<()> {
                 .unwrap_or_default()
         } else if cfg.api_key == "__CLEAR__" {
             cfg.api_key.clear();
+        }
+        if rt == "claude" || (rt == "pi" && cfg.provider == "anthropic") {
+            anyhow::ensure!(!cfg.api_key.starts_with("sk-ant-oat"), "Inserisci una API key Anthropic, non un token dell’abbonamento Claude.");
         }
     }
     for (p, c) in &mut s.connections {

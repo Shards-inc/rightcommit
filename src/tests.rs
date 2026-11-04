@@ -23,7 +23,6 @@ pub(crate) fn app(dir: &Path) -> App {
         bus,
         isolate: false,
         secure_cookie: false,
-        host_import: false,
     }
 }
 #[test]
@@ -1105,10 +1104,7 @@ fn host_bedrock_environment_keeps_model_aliases_and_excludes_direct_api_keys() {
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
-    let cfg = AgentConfig {
-        api_key: "personal-direct-key".into(),
-        ..Default::default()
-    };
+    let cfg = AgentConfig::default();
     let resolve = |host: &BTreeMap<String, String>| {
         agents::resolve_provider_environment("claude", &cfg, |key| host.get(key).cloned())
     };
@@ -1131,7 +1127,7 @@ fn host_bedrock_environment_keeps_model_aliases_and_excludes_direct_api_keys() {
     assert!(agents::has_provider_credentials(&resolve(&host)));
     host.insert("CLAUDE_CODE_USE_BEDROCK".into(), "0".into());
     let direct = resolve(&host);
-    assert_eq!(direct["ANTHROPIC_API_KEY"], "personal-direct-key");
+    assert_eq!(direct["ANTHROPIC_API_KEY"], "wrong-provider-key");
     assert!(!direct.keys().any(|key| key.starts_with("AWS_")));
     let pi = agents::resolve_provider_environment("pi", &AgentConfig::default(), |key| {
         host.get(key).cloned()
@@ -1142,10 +1138,7 @@ fn host_bedrock_environment_keeps_model_aliases_and_excludes_direct_api_keys() {
 
 #[test]
 fn host_claude_oauth_is_explicit_and_never_mixed_with_api_keys_or_bedrock() {
-    let cfg = AgentConfig {
-        api_key: "personal-direct-key".into(),
-        ..Default::default()
-    };
+    let cfg = AgentConfig::default();
     let lookup = |key: &str| match key {
         "CLAUDE_CODE_OAUTH_TOKEN" => Some("subscription-token".into()),
         "ANTHROPIC_API_KEY" => Some("host-direct-key".into()),
@@ -1171,10 +1164,7 @@ fn host_claude_oauth_is_explicit_and_never_mixed_with_api_keys_or_bedrock() {
 
 #[test]
 fn host_gateway_bearer_preserves_endpoint_model_and_excludes_personal_and_oauth_keys() {
-    let cfg = AgentConfig {
-        api_key: "personal-key".into(),
-        ..Default::default()
-    };
+    let cfg = AgentConfig::default();
     let host = |key: &str| match key {
         "ANTHROPIC_BASE_URL" => Some("https://gateway.example/anthropic".into()),
         "ANTHROPIC_AUTH_TOKEN" => Some("gateway-token".into()),
@@ -1202,10 +1192,7 @@ fn host_gateway_bearer_preserves_endpoint_model_and_excludes_personal_and_oauth_
 
 #[test]
 fn host_cloud_provider_modes_route_aws_vertex_foundry_and_codex_access_tokens() {
-    let cfg = AgentConfig {
-        api_key: "personal-direct-key".into(),
-        ..Default::default()
-    };
+    let cfg = AgentConfig::default();
     for (flag, credentials) in [
         (
             "CLAUDE_CODE_USE_BEDROCK",
@@ -1268,10 +1255,7 @@ fn host_cloud_provider_modes_route_aws_vertex_foundry_and_codex_access_tokens() 
 
 #[test]
 fn host_gateway_auth_headers_do_not_mix_with_personal_api_keys() {
-    let cfg = AgentConfig {
-        api_key: "personal-key".into(),
-        ..Default::default()
-    };
+    let cfg = AgentConfig::default();
     let env = agents::resolve_provider_environment("claude", &cfg, |key| match key {
         "ANTHROPIC_BASE_URL" => Some("https://gateway.example".into()),
         "ANTHROPIC_CUSTOM_HEADERS" => {
@@ -1288,6 +1272,13 @@ async fn immediate_stop_drops_local_process_group_including_descendants() {
     let dir = tempfile::tempdir().unwrap();
     let app = app(dir.path());
     let pid_file = dir.path().join("child.pid");
+    // The shell creates the file before writing the PID, so wait for a complete value.
+    let read_pid = || {
+        std::fs::read_to_string(&pid_file)
+            .ok()
+            .filter(|text| text.ends_with('\n'))
+            .and_then(|text| text.trim().parse::<i32>().ok())
+    };
     {
         let work = agents::tool(
             &app,
@@ -1302,7 +1293,7 @@ async fn immediate_stop_drops_local_process_group_including_descendants() {
             result = &mut work => panic!("Process finished before cancellation: {result:?}"),
             _ = async {
                 tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                    while !pid_file.exists() {
+                    while read_pid().is_none() {
                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     }
                 }).await.unwrap();
@@ -1310,11 +1301,7 @@ async fn immediate_stop_drops_local_process_group_including_descendants() {
         }
         // Same drop path used by the worker's immediate-stop select.
     }
-    let pid: i32 = std::fs::read_to_string(pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
+    let pid = read_pid().expect("child PID was written");
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         while unsafe { libc::kill(pid, 0) } == 0 {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -1411,4 +1398,106 @@ fn manager_write_permissions_default_on_persist_and_are_personal() {
     settings.manager_write_enabled = false;
     app.store.save_settings(1, &settings).unwrap();
     assert!(!app.store.settings(1).unwrap().manager_write_enabled);
+}
+
+#[test]
+fn multiuser_credentials_personal_keys_override_global_routes_and_tokens_are_admin_only() {
+    use std::collections::BTreeMap;
+    let host = BTreeMap::from([
+        ("ANTHROPIC_API_KEY", "company-anthropic"), ("CODEX_API_KEY", "company-openai"),
+        ("CLAUDE_CODE_OAUTH_TOKEN", "admin-claude-session"), ("CODEX_ACCESS_TOKEN", "admin-codex-session"),
+        ("ANTHROPIC_AUTH_TOKEN", "admin-bearer"), ("ANTHROPIC_CUSTOM_HEADERS", "Authorization: Bearer admin-header"),
+        ("OPENAI_BASE_URL", "https://company.invalid/v1"), ("CLAUDE_CODE_USE_BEDROCK", "1"),
+        ("AWS_SECRET_ACCESS_KEY", "company-cloud-secret"),
+    ]);
+    let resolve = |uid, runtime, cfg: &AgentConfig| agents::resolve_provider_environment_for_user(uid, runtime, cfg, |key| host.get(key).map(|value|value.to_string()));
+    for uid in [1, 2, 3] {
+        let cfg = AgentConfig {api_key: format!("private-user-{uid}"), ..Default::default()};
+        for (runtime, key) in [("claude", "ANTHROPIC_API_KEY"), ("codex", "CODEX_API_KEY")] {
+            assert_eq!(resolve(uid, runtime, &cfg), BTreeMap::from([(key.into(), cfg.api_key.clone())]));
+        }
+    }
+    let cfg = AgentConfig::default();
+    for runtime in ["claude", "codex"] {
+        let member = agents::resolve_provider_environment_for_user(2, runtime, &cfg, |key| match key {
+            "CLAUDE_CODE_USE_BEDROCK" => None,
+            _ => host.get(key).map(|value|value.to_string()),
+        });
+        assert!(!member.keys().any(|key| ["CLAUDE_CODE_OAUTH_TOKEN", "CODEX_ACCESS_TOKEN", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_CUSTOM_HEADERS"].contains(&key.as_str())));
+        assert!(!agents::has_provider_credentials(&member));
+        assert!(member.is_empty());
+    }
+    for (runtime, token) in [("claude", "CLAUDE_CODE_OAUTH_TOKEN"), ("codex", "CODEX_ACCESS_TOKEN")] {
+        let lookup = |key: &str| (key == token).then(|| "admin-only".to_string());
+        assert_eq!(agents::resolve_provider_environment_for_user(1, runtime, &cfg, lookup)[token], "admin-only");
+        assert!(agents::resolve_provider_environment_for_user(2, runtime, &cfg, lookup).is_empty());
+    }
+    let gateway = agents::resolve_provider_environment_for_user(1, "claude", &cfg, |key| match key {
+        "ANTHROPIC_BASE_URL" => Some("https://company.invalid".into()),
+        "ANTHROPIC_AUTH_TOKEN" => Some("company-gateway".into()), _ => None,
+    });
+    assert_eq!(gateway["ANTHROPIC_AUTH_TOKEN"], "company-gateway");
+}
+
+#[test]
+fn pi_anthropic_subscription_auth_is_refused_without_deleting_native_credentials() {
+    let dir=tempfile::tempdir().unwrap();let app=app(dir.path());let home=agents::user_home(&app,2).unwrap();
+    let config=AgentConfig{provider:"anthropic".into(), ..Default::default()};
+    let env=crate::pi_providers::environment(&config, |key| Some(format!("dummy-{key}")));
+    assert!(!env.contains_key("ANTHROPIC_AUTH_TOKEN"));assert!(!env.contains_key("ANTHROPIC_OAUTH_TOKEN"));
+    let auth=home.join(".pi/agent/auth.json");
+    let saved=r#"{"anthropic":{"type":"oauth","access":"private-test-access","refresh":"private-test-refresh","expires":123}}"#;
+    std::fs::write(&auth,saved).unwrap();
+    assert!(crate::pi_providers::validate_auth(&config,&home).is_err());
+    let mut settings=Settings::default();settings.agents.insert("pi".into(),config.clone());
+    let error=agents::command(&app,2,"pi",&home,&settings).unwrap_err().to_string();
+    assert!(error.contains("incompatibile"));assert!(!error.contains("private-test"));
+    assert_eq!(std::fs::read_to_string(&auth).unwrap(),saved);
+    std::fs::write(&auth,r#"{"anthropic":{"type":"api_key","key":"allowed-api-key"}}"#).unwrap();
+    assert!(agents::command(&app,2,"pi",&home,&settings).is_ok());
+    let token=AgentConfig{api_key:"sk-ant-oat01-test-only".into(),..config};
+    assert!(crate::pi_providers::validate_auth(&token,&home).is_err());
+}
+
+#[test]
+fn administrator_key_inheritance_is_ephemeral_scoped_and_redacted() {
+    let dir=tempfile::tempdir().unwrap();let app=app(dir.path());
+    let mut admin=app.store.settings(1).unwrap();
+    for runtime in ["claude","codex","pi"] {admin.agents.get_mut(runtime).unwrap().api_key=format!("admin-shared-{runtime}-key");}
+    admin.agents.get_mut("pi").unwrap().provider="anthropic".into();app.store.save_settings(1,&admin).unwrap();
+    let user=app.store.settings(2).unwrap();
+    for runtime in ["claude","codex","pi"] {
+        let config=user.agents.get(runtime).unwrap();
+        let inherited=agents::effective_agent_config(&app,2,runtime,config).unwrap();
+        assert_eq!(inherited.api_key,format!("admin-shared-{runtime}-key"));
+        let personal=AgentConfig{api_key:"own-user-key".into(),..config.clone()};
+        assert_eq!(agents::effective_agent_config(&app,2,runtime,&personal).unwrap().api_key,"own-user-key");
+        assert!(app.store.settings(2).unwrap().agents[runtime].api_key.is_empty());
+        assert_eq!(agents::redact_for_user(&app,2,&inherited.api_key,&user),"[redacted]");
+    }
+    let pi=AgentConfig{provider:"openai".into(),..Default::default()};
+    assert!(agents::effective_agent_config(&app,2,"pi",&pi).unwrap().api_key.is_empty());
+    let pi=AgentConfig{base_url:"https://other.invalid".into(),..Default::default()};
+    assert!(agents::effective_agent_config(&app,2,"pi",&pi).unwrap().api_key.is_empty());
+    let pi=AgentConfig{multi_provider:true,..Default::default()};
+    let inherited=agents::effective_agent_config(&app,2,"pi",&pi).unwrap();
+    assert!(!inherited.multi_provider);assert_eq!(inherited.api_key,"admin-shared-pi-key");
+}
+
+#[test]
+fn non_admin_claude_codex_ignore_all_host_provider_configuration() {
+    for runtime in ["claude", "codex"] {
+        let host = |key: &str| match key {
+            "ANTHROPIC_API_KEY" | "CODEX_API_KEY" | "OPENAI_API_KEY" | "AWS_SECRET_ACCESS_KEY" | "AWS_ACCESS_KEY_ID" => Some("host-secret".into()),
+            "CLAUDE_CODE_USE_BEDROCK" => Some("1".into()),
+            "ANTHROPIC_MODEL" => Some("host-model".into()),
+            "ANTHROPIC_BASE_URL" | "OPENAI_BASE_URL" => Some("https://host.invalid".into()),
+            _ => None,
+        };
+        assert!(agents::resolve_provider_environment_for_user(2, runtime, &AgentConfig::default(), host).is_empty());
+        let personal=AgentConfig{api_key:"saved-app-key".into(),..Default::default()};
+        let env=agents::resolve_provider_environment_for_user(2,runtime,&personal,host);
+        assert_eq!(env.len(),1);assert_eq!(env.values().next().unwrap(),"saved-app-key");
+        assert!(!agents::resolve_provider_environment_for_user(1,runtime,&AgentConfig::default(),host).is_empty());
+    }
 }

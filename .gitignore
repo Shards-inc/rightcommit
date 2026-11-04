@@ -5,6 +5,7 @@
 /pi-extensions/node_modules
 /.env
 /test-results
+/deployment-backups/
 *.log
 .DS_Store
 __pycache__/

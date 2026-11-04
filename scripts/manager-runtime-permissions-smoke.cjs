@@ -2,7 +2,7 @@
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert/strict'),{spawn}=require('node:child_process');
 const {request}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 (async()=>{
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),'manager-permissions-')),bin=path.join(dir,'system/tools/bin'),base='http://127.0.0.1:18161';fs.mkdirSync(bin,{recursive:true});
+ const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'manager-permissions-'))),bin=path.join(dir,'system/tools/bin'),base='http://127.0.0.1:18161';fs.mkdirSync(bin,{recursive:true});
  const fixture=`#!/usr/bin/env python3
 import json,sys,pathlib,uuid
 rt=pathlib.Path(sys.argv[0]).name
@@ -44,6 +44,19 @@ else:
    const value=key=>turn.args[turn.args.indexOf(key)+1];
    if(sid){assert.equal(turn.sid,sid);if(rt!=='pi')assert(turn.args.includes(rt==='codex'?'resume':'--resume'))}sid=turn.sid;
    assert(turn.prompt.includes(enabled?'Current permissions: read, write':'Current permissions: READ ONLY'));
+   for(const trace of traces){
+    const implementation=JSON.parse(fs.readFileSync(path.join(path.dirname(trace),'context/manifest.json'),'utf8')).implementation;
+    assert.equal(implementation.user_id,1);
+    assert.equal(implementation.mcp_servers_dir,path.join(dir,'users','1','manager','mcp-servers'));
+    assert.equal(implementation.projects_dir,path.join(dir,'users','1','manager','projects'));
+    assert(fs.statSync(implementation.mcp_servers_dir).isDirectory());
+   }
+   assert(turn.prompt.includes(JSON.stringify(path.join(dir,'users','1','manager','mcp-servers'))));
+   if(rt==='codex'){
+    const roots=turn.args.find(a=>a.startsWith('sandbox_workspace_write.writable_roots='));
+    if(enabled)assert.deepEqual(JSON.parse(roots.split('=')[1]),[path.join(dir,'users','1','manager','mcp-servers'),path.join(dir,'users','1','manager','projects')]);
+    else assert.equal(roots,undefined);
+   }
    if(rt==='codex'){assert.equal(value('--sandbox'),enabled?'workspace-write':'read-only');assert(!turn.args.includes('--disable'));if(!enabled)assert(turn.prompt.includes('Shell remains available for read-only inspection'))}
    if(rt==='claude'){
     if(enabled){assert(!turn.args.includes('--tools'));assert(value('--allowedTools').includes('Bash'))}

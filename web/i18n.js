@@ -1,6 +1,15 @@
 'use strict';
 (()=>{
 const en={
+"Per Claude Code e Codex le configurazioni provider da ambiente sono riservate all’amministratore.":"Claude Code and Codex provider environment configuration is available only to the administrator.",
+"API key dell’amministratore":"Administrator API key",
+"Configurazione esterna":"External configuration",
+"API key dell’amministratore in uso. Imposta una chiave personale per sostituirla.":"Using the administrator API key. Set a personal key to override it.",
+"Se non imposti una chiave personale, viene usata quella dell’amministratore per lo stesso agente e provider, se disponibile.":"If you do not set a personal key, the administrator key for the same agent and provider is used when available.",
+"Il nodo usa le credenziali e i parametri del provider dalla API key personale, dalla chiave dell’amministratore o da .env. Specifica il modello esatto; le chiavi non vengono salvate nel workflow.":"The node uses the personal API key, the administrator key or .env provider configuration. Specify the exact model; keys are not saved in the workflow.",
+"In modalità Multi-provider ogni nodo Pi può scegliere il proprio provider. Il provider e il modello predefiniti si applicano alla chat del manager, al supervisore e ai nodi che ereditano le preferenze personali. Le credenziali provengono dalla chiave dell’amministratore per lo stesso provider o da .env.":"In Multi-provider mode each Pi node can choose its provider. Default provider and model apply to the manager, supervisor and nodes using personal preferences. Credentials come from the matching administrator API key or .env.",
+
+"Tutti i marchi e i loghi appartengono ai rispettivi proprietari.":"All trademarks and logos belong to their respective owners.",
 "Percorso personalizzato":"Custom path",
 "Operazioni API GitHub":"GitHub API operations",
 "Filtra operazioni":"Filter operations",

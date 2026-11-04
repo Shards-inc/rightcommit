@@ -1,5 +1,9 @@
 # Installing rightcommit on Linux
 
+rightcommit supports one or more users with separate settings and agent homes. Pi, Codex
+and Claude Code are available to every user. Before connecting an agent, read
+[Provider terms and permitted use](PROVIDER_TERMS.md).
+
 This guide installs rightcommit directly on Linux, without Docker. The app is compiled on
 your computer. For the quickest start with Docker, see [INSTALL.md](INSTALL.md); with Podman, see [INSTALL_PODMAN.md](INSTALL_PODMAN.md).
 

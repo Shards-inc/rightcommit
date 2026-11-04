@@ -43,6 +43,9 @@ pub fn user_home(app: &App, uid: i64) -> Result<PathBuf> {
         ".pi",
         ".pi/agent",
         "workspaces",
+        "manager",
+        "manager/mcp-servers",
+        "manager/projects",
         "tmp",
         ".cargo",
     ] {
@@ -74,6 +77,30 @@ pub fn own_tree(app: &App, uid: i64, p: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+/// Resolve API-key inheritance at execution time; never persist or publish the admin key.
+pub(crate) fn effective_agent_config(app: &App, uid: i64, runtime: &str, config: &AgentConfig) -> Result<AgentConfig> {
+    let mut effective = config.clone();
+    if uid == 1 || (!config.api_key.is_empty() && !(runtime == "pi" && config.multi_provider)) {return Ok(effective);}
+    let admin = app.store.settings(1)?;
+    if let Some(shared) = admin.agents.get(runtime).filter(|shared| !shared.api_key.is_empty()) {
+        let endpoint = |cfg: &AgentConfig| {
+            let url = if cfg.provider == "local" && cfg.base_url.trim().is_empty() {
+                std::env::var("PI_LOCAL_BASE_URL").unwrap_or_default()
+            } else {cfg.base_url.clone()};
+            url.trim().trim_end_matches('/').to_string()
+        };
+        if runtime != "pi" || (!shared.multi_provider && shared.provider == config.provider
+            && endpoint(shared) == endpoint(config)) {
+            effective.api_key = shared.api_key.clone();
+            if runtime == "pi" {effective.multi_provider = false;}
+        }
+    }
+    Ok(effective)
+}
+pub(crate) fn redact_for_user(app: &App, uid: i64, text: &str, settings: &Settings) -> String {
+    let text = redact(text, settings);
+    if uid != 1 && let Ok(admin) = app.store.settings(1) {redact(&text, &admin)} else {text}
 }
 pub fn command(app: &App, uid: i64, bin: &str, cwd: &Path, settings: &Settings) -> Result<Command> {
     let home = user_home(app, uid)?;
@@ -125,12 +152,16 @@ pub fn command(app: &App, uid: i64, bin: &str, cwd: &Path, settings: &Settings) 
         .current_dir(cwd)
         .kill_on_drop(true)
         .process_group(0);
-    let cfg = settings.agents.get(bin).cloned().unwrap_or_default();
-    let provider_env = provider_environment_in_home(bin, &cfg, &home);
+    let cfg = effective_agent_config(app, uid, bin, &settings.agents.get(bin).cloned().unwrap_or_default())?;
+    if bin == "pi" {crate::pi_providers::validate_auth(&cfg, &home)?;}
+    let provider_env = provider_environment_in_home(bin, &cfg, &home, uid);
     ensure!(
         cloud_provider_count(&provider_env) <= 1,
         "Seleziona un solo provider cloud per Claude: AWS, Vertex oppure Foundry"
     );
+    if let Some(key) = provider_env.get("ANTHROPIC_API_KEY") {
+        ensure!(!key.starts_with("sk-ant-oat"), "Il campo API key richiede una API key Anthropic valida.");
+    }
     c.envs(provider_env);
     // Official Spec Kit 1.2.x supports explicit feature-directory resolution.
     // A single living spec is unambiguous even on an isolated nodo/<run> branch.
@@ -270,22 +301,39 @@ fn cloud_provider_count(env: &std::collections::BTreeMap<String, String>) -> usi
     .filter(|active| *active)
     .count()
 }
-pub(crate) fn resolve_provider_environment(
+pub(crate) fn resolve_provider_environment_for_user(
+    uid: i64,
     runtime: &str,
     cfg: &AgentConfig,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> std::collections::BTreeMap<String, String> {
     let mut env = std::collections::BTreeMap::new();
-    let host = |name: &str| lookup(name).filter(|value| !value.is_empty());
+    // Server provider configuration belongs to the administrator. Other users can
+    // receive only an explicit saved API key (their own or the administrator's).
+    let host = |name: &str| {
+        if uid != 1 && ["claude", "codex"].contains(&runtime) {None}
+        else {lookup(name).filter(|value| !value.is_empty())}
+    };
     if ["claude", "codex", "pi"].contains(&runtime) {
         for &name in NETWORK_ENV {
-            if let Some(value) = host(name) {
+            if let Some(value) = lookup(name).filter(|value| !value.is_empty()) {
                 env.insert(name.into(), value);
             }
         }
     }
     if runtime == "pi" {
         env.extend(crate::pi_providers::environment(cfg,host));
+        return env;
+    }
+    // A saved personal API key always selects direct API billing. Global gateways,
+    // cloud credentials and subscription tokens must not override it.
+    if !cfg.api_key.is_empty() && ["claude", "codex"].contains(&runtime) {
+        env.insert(if runtime == "claude" {"ANTHROPIC_API_KEY"} else {"CODEX_API_KEY"}.into(), cfg.api_key.clone());
+        if runtime == "claude" {
+            for &name in CLAUDE_MODEL_ENV.iter().filter(|name| !["ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"].contains(name)) {
+                if let Some(value) = host(name) {env.insert(name.into(), value);}
+            }
+        }
         return env;
     }
     if runtime == "claude" {
@@ -329,17 +377,18 @@ pub(crate) fn resolve_provider_environment(
             }
             return env;
         }
-        if env
-            .get("ANTHROPIC_CUSTOM_HEADERS")
-            .is_some_and(|headers| has_auth_header(headers))
-        {
+        // A global bearer/header without a gateway URL may be a personal subscription.
+        // Forward it only to the first administrator, never to other users.
+        let gateway = env.contains_key("ANTHROPIC_BASE_URL");
+        if !gateway && uid != 1 {env.remove("ANTHROPIC_CUSTOM_HEADERS");}
+        if env.get("ANTHROPIC_CUSTOM_HEADERS").is_some_and(|headers| has_auth_header(headers)) {return env;}
+        if (gateway || uid == 1) && let Some(token) = host("ANTHROPIC_AUTH_TOKEN") {
+            env.insert("ANTHROPIC_AUTH_TOKEN".into(), token);
             return env;
         }
-        for name in ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"] {
-            if let Some(token) = host(name) {
-                env.insert(name.into(), token);
-                return env;
-            }
+        if uid == 1 && let Some(token) = host("CLAUDE_CODE_OAUTH_TOKEN") {
+            env.insert("CLAUDE_CODE_OAUTH_TOKEN".into(), token);
+            return env;
         }
     }
     if runtime == "codex"
@@ -365,27 +414,26 @@ pub(crate) fn resolve_provider_environment(
     };
     if let Some(key) = key {
         env.insert(key_name.into(), key);
-    } else if runtime == "codex"
+    } else if runtime == "codex" && uid == 1
         && let Some(token) = host("CODEX_ACCESS_TOKEN")
     {
         env.insert("CODEX_ACCESS_TOKEN".into(), token);
     }
     env
 }
-pub(crate) fn provider_environment(
-    runtime: &str,
-    cfg: &AgentConfig,
-) -> std::collections::BTreeMap<String, String> {
-    resolve_provider_environment(runtime, cfg, |name| std::env::var(name).ok())
+#[cfg(test)]
+pub(crate) fn resolve_provider_environment(runtime: &str, cfg: &AgentConfig, lookup: impl Fn(&str) -> Option<String>) -> std::collections::BTreeMap<String, String> {
+    resolve_provider_environment_for_user(1, runtime, cfg, lookup)
 }
 pub(crate) fn provider_environment_in_home(
     runtime: &str,
     cfg: &AgentConfig,
     home: &Path,
+    uid: i64,
 ) -> std::collections::BTreeMap<String, String> {
-    let mut env = provider_environment(runtime, cfg);
+    let mut env = resolve_provider_environment_for_user(uid, runtime, cfg, |name| std::env::var(name).ok());
     // Codex native provider profiles can use AWS independently of Claude's provider flags.
-    if runtime == "codex" && home.join(".codex/config.toml").is_file() {
+    if uid == 1 && runtime == "codex" && cfg.api_key.is_empty() && home.join(".codex/config.toml").is_file() {
         for &name in AWS_ENV.iter().filter(|name| name.starts_with("AWS_")) {
             if let Ok(value) = std::env::var(name)
                 && !value.is_empty()
@@ -547,7 +595,9 @@ pub async fn tool(
     args: &[&str],
     timeout: u64,
 ) -> Result<String> {
-    let s = app.store.settings(uid)?;
+    let mut s = app.store.settings(uid)?;
+    let config = effective_agent_config(app, uid, bin, &s.agents.get(bin).cloned().unwrap_or_default())?;
+    s.agents.insert(bin.into(), config);
     let mut c = command(app, uid, bin, cwd, &s)?;
     c.args(args)
         .stdin(Stdio::null())
@@ -561,7 +611,7 @@ pub async fn tool(
     )
     .await
     .context("Tempo massimo comando superato")??;
-    let text = redact(
+    let text = redact_for_user(app, uid,
         &format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
@@ -809,6 +859,7 @@ pub async fn turn(app: &App, uid: i64, run: &mut Run, request: Turn<'_>) -> Resu
         if config.multi_provider {crate::pi_providers::preflight(app,uid,&settings,provider_override,model,base_url_override)?;}
         settings.agents.insert("pi".into(),config.clone());config
     } else {settings.agents.get(runtime).cloned().unwrap_or_default()};
+    let cfg = effective_agent_config(app, uid, runtime, &cfg)?;
     let mut session = run.sessions.get(binding).cloned().unwrap_or(NativeSession {
         provider: String::new(), base_url: String::new(),
 runtime: runtime.into(),
@@ -842,10 +893,10 @@ runtime: runtime.into(),
         crate::mcp_client::prepare(app, uid, run).await?
     };
     let mut settings = app.store.settings(uid)?; // OAuth may have refreshed during MCP preparation.
-    if runtime=="pi" {settings.agents.insert("pi".into(),cfg.clone());}
+    settings.agents.insert(runtime.into(),cfg.clone());
     let read_only = supervising || (managing && !settings.manager_write_enabled);
     let redact_turn = |value: &str| {
-        let text = redact(value, &settings);
+        let text = redact_for_user(app, uid, value, &settings);
         if let Some(mcp) = &mcp {
             text.replace(mcp.token(), "[redacted]")
         } else {
@@ -879,6 +930,13 @@ runtime: runtime.into(),
                 cmd.args(["resume", &session.native_id]);
             }
             cmd.args(["--json", "--skip-git-repo-check"]);
+            if managing && !read_only && !app.isolate {
+                let home = app.data.join("users").join(uid.to_string()).join("manager");
+                cmd.args(["-c", &format!(
+                    "sandbox_workspace_write.writable_roots={}",
+                    serde_json::to_string(&[home.join("mcp-servers"), home.join("projects")])?
+                )]);
+            }
             if !session.model.is_empty() {
                 cmd.args(["--model", &session.model]);
             }
@@ -1025,14 +1083,17 @@ runtime: runtime.into(),
     };
     let permissions = if managing {
         if settings.manager_write_enabled {
-            "Current permissions: read, write, edit and shell tools are enabled. Use them for files requested by the user. This replaces permissions from earlier turns."
+            "Current permissions: read, write, edit and shell tools are enabled by Personal Settings / Manager (manager_write_enabled=true). Use them for implementation requested by the user. This replaces permissions and claims from earlier turns. An OS permission error for one path does not mean these tools are disabled; use the current user's permanent directories where appropriate and report the actual failing path."
         } else if runtime == "codex" {
             "Current permissions: READ ONLY. Shell remains available for read-only inspection. Do not write or edit files or perform dispositive actions. You can still propose workflow graph changes through the structured result. This replaces permissions from earlier turns."
         } else {
             "Current permissions: READ ONLY. Do not write or edit files, execute shell commands or perform dispositive actions. You can still propose workflow graph changes through the structured result. This replaces permissions from earlier turns."
         }
     } else { "" };
-    let full = format!("{prompt}\n\n{contract}\n\n{permissions}");
+    let manager_context = if managing {
+        format!("Current authenticated account and permanent implementation directories: {}. These paths belong to this account; do not assume user ID 1 or use another account's home. Directory availability does not override the current permissions below.", crate::manager::implementation_context(app, uid))
+    } else { String::new() };
+    let full = format!("{prompt}\n\n{contract}\n\n{manager_context}\n\n{permissions}");
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

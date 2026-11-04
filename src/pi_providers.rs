@@ -53,9 +53,8 @@ pub(crate) fn environment(
                 env.insert(name.clone(), value);
             }
         }
-        if config.provider == "anthropic"
-            && lookup("ANTHROPIC_BASE_URL").is_some_and(|value| !value.is_empty())
-        {
+        if config.provider == "anthropic" {
+            // Claude subscription tokens belong to the official Claude Code CLI, not Pi.
             env.remove("ANTHROPIC_AUTH_TOKEN");
             env.remove("ANTHROPIC_OAUTH_TOKEN");
         }
@@ -69,6 +68,21 @@ pub(crate) fn environment(
         }
     }
     env
+}
+/// Pi must not execute Anthropic requests using a saved Claude subscription session.
+/// Do not delete or rewrite the user's native credentials; fail with an actionable error.
+pub(crate) fn validate_auth(config: &AgentConfig, home: &Path) -> Result<()> {
+    if config.provider != "anthropic" {return Ok(());}
+    ensure!(!config.api_key.starts_with("sk-ant-oat"), "Pi richiede una API key Anthropic, non un token dell’abbonamento Claude.");
+    let path = home.join(".pi/agent/auth.json");
+    if path.exists() {
+        ensure!(!path.is_symlink(), "File credenziali Pi non valido");
+        let auth: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+        let credential = &auth["anthropic"];
+        ensure!(credential["type"] != "oauth", "Configurazione Pi esterna incompatibile. Configura una API key del provider.");
+        ensure!(!credential["key"].as_str().is_some_and(|key|key.starts_with("sk-ant-oat")), "Pi richiede una API key Anthropic, non un token dell’abbonamento Claude.");
+    }
+    Ok(())
 }
 pub(crate) fn effective(
     settings: &Settings,
@@ -130,6 +144,7 @@ pub(crate) fn available(config: &AgentConfig, home: &Path) -> bool {
         }
     }
     let has = |name: &str| env.get(name).is_some_and(|value| !value.trim().is_empty());
+    if validate_auth(config, home).is_err() {return false;}
     let native = agents::pi_has_login(home, &config.provider);
     match config.provider.as_str() {
         "local" => crate::pi_local::validate(config).is_ok(),
@@ -167,10 +182,7 @@ pub(crate) fn available(config: &AgentConfig, home: &Path) -> bool {
                 && has("CLOUDFLARE_GATEWAY_ID")
         }
         "anthropic" => {
-            native
-                || has("ANTHROPIC_API_KEY")
-                || has("ANTHROPIC_AUTH_TOKEN")
-                || has("ANTHROPIC_OAUTH_TOKEN")
+            native || has("ANTHROPIC_API_KEY")
                 || (has("ANTHROPIC_FEDERATION_RULE_ID")
                     && has("ANTHROPIC_ORGANIZATION_ID")
                     && has("ANTHROPIC_IDENTITY_TOKEN_FILE"))
@@ -178,19 +190,14 @@ pub(crate) fn available(config: &AgentConfig, home: &Path) -> bool {
         _ => native || key_env(&config.provider).is_some_and(has),
     }
 }
-pub(crate) fn any_available(settings: &Settings, home: &Path) -> bool {
+pub(crate) fn any_available_for_user(app: &App, uid: i64, settings: &Settings, home: &Path) -> bool {
     catalog().iter().any(|provider| {
         let mut config = settings.agents.get("pi").cloned().unwrap_or_default();
-        config.multi_provider = true;
-        config.api_key.clear();
-        if config.provider != provider.id {
-            config.base_url.clear();
-        }
+        config.multi_provider = true;config.api_key.clear();
+        if config.provider != provider.id {config.base_url.clear();}
         config.provider = provider.id.clone();
-        if config.provider == "local" && config.base_url.is_empty() {
-            config.base_url = std::env::var("PI_LOCAL_BASE_URL").unwrap_or_default();
-        }
-        available(&config, home)
+        if config.provider == "local" && config.base_url.is_empty() {config.base_url=std::env::var("PI_LOCAL_BASE_URL").unwrap_or_default();}
+        agents::effective_agent_config(app,uid,"pi",&config).is_ok_and(|cfg|available(&cfg,home))
     })
 }
 pub(crate) fn preflight(
@@ -202,10 +209,11 @@ pub(crate) fn preflight(
     url: &str,
 ) -> Result<AgentConfig> {
     let config = effective(settings, provider, model, url)?;
+    let config = agents::effective_agent_config(app, uid, "pi", &config)?;
     let home = app.data.join("users").join(uid.to_string());
     ensure!(
         available(&config, &home),
-        "Configurazione Pi mancante per {}. Configura le credenziali e i parametri del provider in .env o nel login nativo Pi.",
+        "Configurazione Pi mancante per {}. Configura la API key nelle impostazioni o i parametri del provider in .env.",
         catalog()
             .iter()
             .find(|provider| provider.id == config.provider)

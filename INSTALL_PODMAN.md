@@ -1,5 +1,9 @@
 # Installing rightcommit with Podman
 
+rightcommit supports one or more users with separate settings and agent homes. Pi, Codex
+and Claude Code are available to every user. Before connecting an agent, read
+[Provider terms and permitted use](PROVIDER_TERMS.md).
+
 Podman is a free alternative to Docker. It runs rightcommit with everything included, on
 **macOS, Windows or Linux**. To use Docker instead, see [INSTALL.md](INSTALL.md).
 
