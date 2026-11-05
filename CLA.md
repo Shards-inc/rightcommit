@@ -10,7 +10,7 @@ Thank you for contributing to RightCommit (the "Project"). This Contributor Lice
 
 ## 1. Copyright license
 
-You grant the Maintainers and recipients of software distributed by the Project a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense and distribute Your Contributions and such derivative works, under any license terms the Maintainers choose, including the Project's current license (FSL-1.1-ALv2) and its future license (Apache 2.0), and including proprietary terms.
+You grant the Maintainers and recipients of software distributed by the Project a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense and distribute Your Contributions and such derivative works, under any license terms the Maintainers choose, including the Project's current license (Apache 2.0), and including proprietary terms.
 
 ## 2. Patent license
 

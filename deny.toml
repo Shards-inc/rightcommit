@@ -40,7 +40,7 @@ allow = [
 confidence-threshold = 0.9
 exceptions = [
     # rightcommit's own license.
-    { crate = "rightcommit", allow = ["FSL-1.1-ALv2"] },
+    { crate = "rightcommit", allow = ["Apache-2.0"] },
 ]
 
 [bans]

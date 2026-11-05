@@ -2,11 +2,9 @@
 
 rightcommit's documented and supported deployment scope is personal use or **internal use
 by an organization and its authorized users**. It is not offered as an intermediary,
-provider-access reseller or shared credential service for external customers. Do not use
+provider-access reseller or shared credential service for external users. Do not use
 this deployment model to sell access to an AI provider, rebill provider consumption to
-external users, or let unrelated customers use the operator's provider credentials.
-Delivering consulting work within a client's authorized deployment is distinct from
-providing that client access through the consultant's provider account.
+external users, or let unrelated users use the operator's provider credentials.
 
 The products and services integrated by rightcommit retain their own licenses, agreements
 and usage policies. Installing rightcommit, building its container locally, or configuring
@@ -17,7 +15,7 @@ operator and each user must comply with the terms applicable to their role and u
   conditions for integrating Claude Code; keep the original binary and its built-in
   authentication mechanisms intact. Organizational API/cloud credentials may serve the
   organization's own authorized users, with usage billed to the credential owner under
-  its agreement. Do not resell or intermediate Claude Code usage for external customers.
+  its agreement. Do not resell or intermediate Claude Code usage for external users.
   See [Claude Code legal and compliance](https://code.claude.com/docs/en/legal-and-compliance).
 - **OpenAI / Codex:** comply with the applicable Services Agreement and incorporated
   policies. Keep individual account credentials separate; do not resell account access,

@@ -1,8 +1,8 @@
 [package]
 name = "rightcommit"
-version = "1.2.1"
+version = "1.2.3"
 edition = "2024"
-license = "FSL-1.1-ALv2"
+license = "Apache-2.0"
 description = "Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent. Parallel workflows, full control over every commit, and FinOps that shows exactly what each agent and model costs."
 rust-version = "1.95"
 readme = "README.md"
@@ -15,7 +15,7 @@ categories = ["development-tools", "command-line-utilities"]
 include = [
     "/src/**/*.rs", "/src/templates/*.json",
     "/web/*.css", "/web/*.html", "/web/*.js", "/web/*.svg",
-    "/distribution/assets.json", "/distribution/agents.env", "/distribution/pi-providers.json", "/.env.example", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/licenses/*.txt", "/licenses/*.md",
+    "/distribution/assets.json", "/distribution/agents.env", "/distribution/pi-providers.json", "/.env.example", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/NOTICE", "/licenses/*.txt", "/licenses/*.md",
     "/README.md", "/CHANGELOG.md", "/INSTALL*.md", "/HOW_TO_CONFIGURE*.md", "/PROVIDER_TERMS.md", "/.github/assets/*.png", "/.github/assets/*.svg",
 ]
 

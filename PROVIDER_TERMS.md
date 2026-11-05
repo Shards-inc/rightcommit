@@ -18,15 +18,15 @@ Keep the original binary and its built-in authentication methods intact. Product
 must not imply Anthropic endorsement or affiliation.
 
 Anthropic expressly permits organizational management of API/cloud credentials for the
-customer's own authorized users, billed to the credential owner under their agreement.
-An internal deployment is distinct from offering Claude Code to external customers; the
+credential holder's own authorized users, billed to the credential owner under their agreement.
+An internal deployment is distinct from offering Claude Code to external users; the
 latter has additional credential, direct-billing and non-intermediation conditions.
 Follow the [Usage Policy](https://www.anthropic.com/legal/aup) and any cloud-provider agreement.
 
 ## OpenAI and Codex
 
 OpenAI's [Services Agreement](https://openai.com/policies/services-agreement/), sections 2.2
-and 3.2, allows API-based customer applications serving end users. An internal deployment
+and 3.2, allows API-based applications serving end users. An internal deployment
 can use appropriately scoped organizational API credentials under its agreement. Do not
 share individual account credentials, transfer keys to third parties, resell account access
 or bypass usage limits. Review the incorporated policies and service-specific terms.
@@ -41,7 +41,7 @@ Cloud services require their own agreements. Local servers and models retain the
 and model licenses; API compatibility does not grant provider access or imply affiliation.
 
 Only send data you are entitled to process. Review provider retention, privacy and training
-settings, including required workplace/customer authorizations. Protect `.env`, user homes,
+settings, including required workplace and data-owner authorizations. Protect `.env`, user homes,
 the encrypted database, master key and backups; revoke exposed credentials.
 
 These references do not accept agreements on anyone's behalf or certify compliance.
