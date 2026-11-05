@@ -77,14 +77,6 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
 - **Beyond Traditional Automation.** Automate business processes with orchestrated AI agents.
   Run workflows on a schedule, attended or unattended, with human oversight where needed.
 
-## Scheduled workflows
-
-The **Run execution** menu offers **Run now** and **Scheduled**. Schedule a single run or a recurring workflow every N minutes/hours, daily or weekly, with a time zone and optional end date. The dialog previews upcoming occurrences using the app's existing controls.
-
-Each schedule appears once in the execution register and workflow history, with its runs grouped underneath. Pause or delete the schedule to stop future starts; use the existing run controls to pause or stop an execution already in progress. Saved workflow changes apply to subsequent runs.
-
-The local service must be running. Missed occurrences are skipped, and a previous run still running, paused or waiting for input prevents overlapping starts from that schedule. Schedule settings and history survive service restarts.
-
 ## Connections
 
 - **Agents:** Claude Code, Codex and Pi, with an API key or an authorized gateway (Anthropic,
@@ -98,8 +90,7 @@ The local service must be running. Missed occurrences are skipped, and a previou
 ## Who it's for
 
 rightcommit supports individual use and internal organizational deployments with separate
-user accounts. Pi, Claude Code and Codex are available to every user. Read
-[Provider terms and permitted use](PROVIDER_TERMS.md) and
+user accounts. Read [Provider terms and permitted use](PROVIDER_TERMS.md) and
 [Intended use and third-party provider obligations](INTENDED_USE.md). Provider names identify integrations
 and do not imply affiliation or endorsement.
 
@@ -225,5 +216,3 @@ Questions and feedback: [hello@rightcommit.com](mailto:hello@rightcommit.com).
 <sub>Claude Code, Codex, Pi, GitHub, Azure DevOps, ServiceNow, Jira, Confluence, Bitbucket,
 Spec Kit, Rust, Docker and other names and marks belong to their owners. rightcommit is not
 affiliated with them.</sub>
-
-[CONFIGURATION GUIDES](guides/README.md) · [Configuring ServiceNow: ITSM classification, catalog Requests and Spec Kit](guides/CONFIGURING_SERVICENOW.md).
