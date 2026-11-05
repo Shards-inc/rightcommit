@@ -300,6 +300,7 @@ fn scan(
                 "node_modules",
                 ".venv",
                 ".nodo",
+                ".rightcommit",
                 "__pycache__",
             ]
             .contains(&name.as_ref())

@@ -125,7 +125,7 @@ function associatedAgent(n){return ['Task','Review','Gate'].includes(n.kind)?cur
 function associatedAgentBadge(agent){return agent?`<span class="node-agent-badge" data-agent="${esc(agent.id)}" data-tip="${esc(agent.title)} · ${esc(nodeLabel(agent))}" aria-hidden="true">${nodeIcon(agent)}</span>`:''}
 function hydrate(root=document){$$('[data-icon]',root).forEach(e=>{e.innerHTML=icon(e.dataset.icon);e.removeAttribute('data-icon')})}
 async function api(path,body,method){const res=await fetch('/api'+path,{method:method||(body===undefined?'GET':'POST'),headers:{'Content-Type':'application/json','X-Nodo-Request':'1'},credentials:'same-origin',...(body!==undefined?{body:JSON.stringify(body)}:{})});let data;try{data=await res.json()}catch{throw Error('Risposta server non valida')}if(!res.ok){if(res.status===401&&path!='/auth/login')showAuth();throw Error(data.error||`HTTP ${res.status}`)}return data}
-let toastTimer;function toast(s){$('#toast').textContent=s;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,6500)}
+let toastTimer;function toast(s){const el=$('#toast');el.textContent=s;el.hidden=false;if(el.showPopover){if(el.matches(':popover-open'))el.hidePopover();el.showPopover()}clearTimeout(toastTimer);toastTimer=setTimeout(()=>{if(el.matches(':popover-open'))el.hidePopover();el.hidden=true},6500)}
 function submitSingleTextDialog(e){
   if(e.key!=='Enter'||e.defaultPrevented||e.isComposing||e.keyCode===229||e.ctrlKey||e.metaKey||e.altKey||e.shiftKey)return;
   const dialog=e.currentTarget,field=e.target;
@@ -162,38 +162,22 @@ function appConfirm({title,message,accept='Conferma',danger=false}){
   });
 }
 const closeModal=()=>$('#dialog').close();
-function configureAuthAutofill(enabled){
- const form=$('#auth-form');form.authAutofillAllowed=enabled;form.autocomplete=enabled?'on':'off';
- for(const field of [form.elements.email,form.elements.password]){
-  field.autocomplete=enabled?('section-rightcommit-account '+(field.name==='email'?'username':registerMode?'new-password':'current-password')):'off';
- }
- for(const element of [form,form.elements.email,form.elements.password])for(const attribute of ['data-lpignore','data-1p-ignore','data-bwignore']){
-  if(enabled)element.removeAttribute(attribute);else element.setAttribute(attribute,'true');
- }
- const button=$('#auth-autofill');button.setAttribute('aria-pressed',String(enabled));button.textContent=uiText(enabled?'Disattiva compilazione automatica':'Usa gestore password');
- $('#auth-credentials-note').textContent=uiText(enabled?'Gestore password abilitato per il tuo account rightcommit.':'Inserisci i dati del tuo account rightcommit. Per usare le credenziali salvate, abilita il gestore password.');
-}
 function resetAuthForm(){
- const form=$('#auth-form');form.reset();form.authDraft={email:'',password:''};
+ const form=$('#auth-form');form.reset();
  for(const name of ['email','password'])form.elements[name].value='';
- $('#auth-error').textContent='';configureAuthAutofill(false);
+ $('#auth-error').textContent='';
+ form.elements.email.autocomplete='section-rightcommit-account username';
+ form.elements.password.autocomplete='section-rightcommit-account '+(registerMode?'new-password':'current-password');
 }
 function updateAuthMode(){
  $('#auth-title').textContent=uiText(registerMode?(authInfo.setup_required?'Crea il tuo workspace':'Crea un account'):'Accedi al workspace');
  $('#auth-submit').textContent=uiText(registerMode?(authInfo.setup_required?'Crea amministratore':'Registrati'):'Accedi');
  $('#auth-note').textContent=uiText(authInfo.setup_required?'Il primo account può creare gli altri utenti.':'Ogni account ha workflow,\nsessioni e credenziali separati.');
+ $('#auth-switch').textContent=uiText(registerMode?'Torna al login':'Crea un account');
  $('#auth-switch').hidden=!authInfo.registration_open||authInfo.setup_required;
  resetAuthForm();
 }
-function restoreAuthField(field){
- const form=$('#auth-form');if(form.authAutofillAllowed||!['email','password'].includes(field.name))return false;
- const value=form.authDraft?.[field.name]||'',changed=field.value!==value;if(changed)field.value=value;return changed;
-}
 function authCredentials(form){
- if(!form.authAutofillAllowed){
-  const changed=[form.elements.email,form.elements.password].map(restoreAuthField).some(Boolean);
-  if(changed){$('#auth-error').textContent=uiText('La compilazione automatica non richiesta è stata ignorata. Inserisci i dati del tuo account rightcommit o abilita il gestore password.');return null}
- }
  if(!form.reportValidity())return null;
  return {email:form.elements.email.value,password:form.elements.password.value};
 }
@@ -804,6 +788,7 @@ async function loadSourceFolderOptions(form){
 }
 const artifactSearch={scope:null,value:''};
 let artifactShowHidden=false;
+const artifactFolders={hidden:new Set(),expanded:new Set(),modified:new Set(),defaultsSeen:new Set()};
 function artifactKey(a){return a.file?.change==='report'?'report:'+a.node:a.file?.location||a.path}
 function artifactTime(a){return a.file?.modified||a.created*1000||0}
 function artifactDate(a){const time=artifactTime(a);return time?new Date(time).toLocaleString(nodoLocale(),{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}):'—'}
@@ -813,17 +798,79 @@ function artifactIsCache(a){
  const parts=a.path.split(/[\\/]/),name=parts.at(-1);
  return parts.some(part=>artifactCacheDirectories.has(part))||/\.py[co]$/i.test(name)||['.DS_Store','Thumbs.db'].includes(name);
 }
-function inspectorArtifacts(arts){
- const scope=app.user?.id+':'+app.run?.id;if(artifactSearch.scope!==scope){artifactSearch.scope=scope;artifactSearch.value=''}
+function latestArtifacts(arts){
  const latest=new Map();for(const a of arts){if(artifactIsCache(a))continue;const key=artifactKey(a),old=latest.get(key);if(!old||a.version>=old.version)latest.set(key,a)}
- const all=[...latest.values()].sort((a,b)=>artifactTime(b)-artifactTime(a)||b.created-a.created||a.path.localeCompare(b.path)),reports=all.filter(a=>a.file?.change==='report'||(!a.file&&a.path.startsWith('.nodo/reports/'))),files=all.filter(a=>!reports.includes(a));
- const row=a=>`<button type="button" class="artifact-item" data-action="artifact" data-id="${esc(a.id)}" data-artifact-hidden="${a.path.split(/[\\/]/).some(part=>part.startsWith('.')&&part!=='.'&&part!=='..')}" data-artifact-search="${esc(a.path.toLocaleLowerCase())}" data-tip="${esc(a.file?.location||a.path)}">${icon('file-text')}<span class="artifact-file"><span data-no-i18n>${esc(a.path)}</span><small>${uiText('Versione')} ${a.version}</small><time class="artifact-date" data-no-i18n datetime="${artifactTime(a)?new Date(artifactTime(a)).toISOString():''}" title="${esc(uiText(a.file?.change==='legacy'?'Data della versione salvata':'Ultima modifica del file'))}">${esc(artifactDate(a))}</time></span><span class="artifact-origin" data-no-i18n>${artifactRoot(a).slice(1)}</span></button>`;
- return `<div class="inspector-artifacts-heading"><span class="eyebrow" data-artifact-count>ARTEFATTI · ${files.length}</span><span class="small">${uiText('Tutta la run')}</span></div><input type="search" class="artifact-search" data-artifact-query value="${esc(artifactSearch.value)}" placeholder="${esc(uiText('Cerca artefatti…'))}" aria-label="${esc(uiText('Cerca artefatti'))}"><div class="storage-hidden-control artifact-hidden-control"><span id="artifact-hidden-label">Mostra nascosti</span><button type="button" role="switch" class="storage-hidden-toggle" data-artifact-show-hidden aria-checked="${artifactShowHidden}" aria-labelledby="artifact-hidden-label"><span aria-hidden="true"></span></button></div><div data-inspector-artifacts>${files.map(row).join('')}<p class="note" data-artifact-empty>${uiText(files.length?'Nessun artefatto corrispondente.':'I file creati o modificati nella run appariranno qui.')}</p>${reports.length?`<details class="artifact-reports"><summary>${uiText('Report')} · ${reports.length}</summary>${reports.map(row).join('')}</details>`:''}</div>`;
+ return [...latest.values()];
+}
+function artifactFolderPath(a){return artifactRoot(a)+'/'+a.path.split(/[\\/]/).filter(p=>p&&p!=='.').join('/')}
+function artifactFolderVisible(path){return ![...artifactFolders.hidden].some(folder=>path===folder||path.startsWith(folder+'/'))}
+function applyArtifactFolderDefaults(arts){
+ for(const artifact of arts){
+  const parts=artifactFolderPath(artifact).split('/').filter(Boolean);parts.pop();
+  for(let i=0;i<parts.length-1;i++)if(parts[i]==='target'&&parts[i+1]==='debug'){
+   const path='/'+parts.slice(0,i+2).join('/');
+   if(!artifactFolders.defaultsSeen.has(path)){artifactFolders.defaultsSeen.add(path);artifactFolders.hidden.add(path)}
+  }
+ }
+}
+function artifactFolderTree(){
+ const roots=new Map();
+ for(const a of latestArtifacts(app.artifacts)){
+  const parts=artifactFolderPath(a).split('/').filter(Boolean);parts.pop();let children=roots,path='';
+  for(const name of parts){path+='/'+name;if(!children.has(name))children.set(name,{name,path,children:new Map()});children=children.get(name).children}
+ }
+ return roots;
+}
+function artifactFolderRows(tree){
+ return [...tree.values()].sort((a,b)=>a.name.localeCompare(b.name)).map(folder=>{
+  const visible=artifactFolderVisible(folder.path),inherited=[...artifactFolders.hidden].some(parent=>parent!==folder.path&&folder.path.startsWith(parent+'/'));
+  const expanded=artifactFolders.expanded.has(folder.path),group='artifact-folder-'+encodeURIComponent(folder.path);
+  const label=`${icon('folder-git-2')}<span data-no-i18n title="${esc(folder.path)}">${esc(folder.name)}</span>`;
+  return `<li><div class="artifact-folder-row">${folder.children.size?`<button type="button" class="artifact-folder-branch" data-artifact-expand="${esc(folder.path)}" aria-label="${esc(uiText(expanded?'Comprimi cartella':'Espandi cartella')+' '+folder.path)}" aria-expanded="${expanded}" aria-controls="${esc(group)}">${icon('chevron-right')}${label}</button>`:`<div class="artifact-folder-leaf">${label}</div>`}<button type="button" class="storage-hidden-toggle" role="switch" data-artifact-folder="${esc(folder.path)}" aria-label="${esc(uiText('Mostra cartella')+' '+folder.path)}" aria-checked="${visible}" ${inherited?'disabled':''}><span aria-hidden="true"></span></button></div>${folder.children.size?`<ul id="${esc(group)}" data-artifact-children="${esc(folder.path)}" ${expanded?'':'hidden'}>${artifactFolderRows(folder.children)}</ul>`:''}</li>`;
+ }).join('');
+}
+function refreshArtifactFolderDialog(){
+ const tree=$('[data-artifact-folders]');if(!tree)return;
+ const focused=document.activeElement?.dataset.artifactFolder,scroll=tree.closest('.modal-body').scrollTop;
+ tree.innerHTML=artifactFolderRows(artifactFolderTree())||`<li class="note">${uiText('Nessuna cartella disponibile.')}</li>`;
+ tree.closest('.modal-body').scrollTop=scroll;
+ for(const toggle of $$('[data-artifact-folder]',tree))toggle.onclick=()=>{
+  const path=toggle.dataset.artifactFolder;artifactFolders.modified.add(path);
+  if(artifactFolderVisible(path))artifactFolders.hidden.add(path);
+  else for(const folder of [...artifactFolders.hidden])if(folder===path||folder.startsWith(path+'/'))artifactFolders.hidden.delete(folder);
+  bindArtifactSearch();refreshArtifactFolderDialog();
+  $$('[data-artifact-folder]',tree).find(el=>el.dataset.artifactFolder===path)?.focus({preventScroll:true});
+ };
+ for(const button of $$('[data-artifact-expand]',tree))button.onclick=()=>{
+  const path=button.dataset.artifactExpand,expanded=!artifactFolders.expanded.has(path);
+  if(expanded)artifactFolders.expanded.add(path);else artifactFolders.expanded.delete(path);
+  button.setAttribute('aria-expanded',String(expanded));
+  button.setAttribute('aria-label',uiText(expanded?'Comprimi cartella':'Espandi cartella')+' '+path);
+  document.getElementById(button.getAttribute('aria-controls')).hidden=!expanded;
+ };
+ if(focused)$$('[data-artifact-folder]',tree).find(el=>el.dataset.artifactFolder===focused)?.focus({preventScroll:true});
+}
+function artifactFolderDialog(){
+ artifactFolders.expanded.clear();
+ for(const path of artifactFolders.modified){
+  const parts=path.split('/').filter(Boolean);parts.pop();let ancestor='';
+  for(const part of parts){ancestor+='/'+part;artifactFolders.expanded.add(ancestor)}
+ }
+ modal('Filtra artefatti',`<p class="note">${uiText('Scegli le cartelle da mostrare. Nascondere una cartella esclude anche tutte le sue sottocartelle. I file restano conservati.')}</p><ul class="artifact-folder-tree" data-artifact-folders></ul>`,`<button type="button" data-action="close-dialog" class="primary">${uiText('Chiudi')}</button>`);
+ refreshArtifactFolderDialog();
+}
+function inspectorArtifacts(arts){
+ const scope=app.user?.id+':'+app.run?.id;if(artifactSearch.scope!==scope){artifactSearch.scope=scope;artifactSearch.value='';artifactFolders.hidden.clear();artifactFolders.modified.clear();artifactFolders.expanded.clear();artifactFolders.defaultsSeen.clear()}
+ const all=latestArtifacts(arts).sort((a,b)=>artifactTime(b)-artifactTime(a)||b.created-a.created||a.path.localeCompare(b.path)),reports=all.filter(a=>a.file?.change==='report'||(!a.file&&/^\.(?:rightcommit|nodo)\/reports\//.test(a.path))),files=all.filter(a=>!reports.includes(a));
+ applyArtifactFolderDefaults(all);
+ const row=a=>`<button type="button" class="artifact-item" data-action="artifact" data-id="${esc(a.id)}" data-artifact-hidden="${a.path.split(/[\\/]/).some(part=>part.startsWith('.')&&part!=='.'&&part!=='..')}" data-artifact-folder-path="${esc(artifactFolderPath(a))}" data-artifact-search="${esc(a.path.toLocaleLowerCase())}" data-tip="${esc(a.file?.location||a.path)}">${icon('file-text')}<span class="artifact-file"><span data-no-i18n>${esc(a.path)}</span><small>${uiText('Versione')} ${a.version}</small><time class="artifact-date" data-no-i18n datetime="${artifactTime(a)?new Date(artifactTime(a)).toISOString():''}" title="${esc(uiText(a.file?.change==='legacy'?'Data della versione salvata':'Ultima modifica del file'))}">${esc(artifactDate(a))}</time></span><span class="artifact-origin" data-no-i18n>${artifactRoot(a).slice(1)}</span></button>`;
+ return `<div class="inspector-artifacts-heading"><span class="eyebrow" data-artifact-count>ARTEFATTI · ${files.length}</span><span class="small">${uiText('Tutta la run')}</span></div><input type="search" class="artifact-search" data-artifact-query value="${esc(artifactSearch.value)}" placeholder="${esc(uiText('Cerca artefatti…'))}" aria-label="${esc(uiText('Cerca artefatti'))}"><div class="storage-hidden-control artifact-hidden-control"><button type="button" data-artifact-filter>${uiText('Filtra')}</button><span id="artifact-hidden-label">${uiText('Mostra nascosti')}</span><button type="button" role="switch" class="storage-hidden-toggle" data-artifact-show-hidden aria-checked="${artifactShowHidden}" aria-labelledby="artifact-hidden-label"><span aria-hidden="true"></span></button></div><div data-inspector-artifacts>${files.map(row).join('')}<p class="note" data-artifact-empty>${uiText(files.length?'Nessun artefatto corrispondente.':'I file creati o modificati nella run appariranno qui.')}</p>${reports.length?`<details class="artifact-reports"><summary>${uiText('Report')} · ${reports.length}</summary>${reports.map(row).join('')}</details>`:''}</div>`;
 }
 function bindArtifactSearch(){
  const input=$('[data-artifact-query]');if(!input)return;
- const apply=()=>{const query=input.value.toLocaleLowerCase().trim();artifactSearch.value=input.value;const rows=$$('[data-artifact-search]',$('#artifacts-panel'));rows.forEach(row=>row.hidden=(!artifactShowHidden&&row.dataset.artifactHidden==='true')||!row.dataset.artifactSearch.includes(query));const files=rows.filter(row=>!row.closest('.artifact-reports')),visible=files.filter(row=>!row.hidden).length;const count=$('[data-artifact-count]');if(count)count.textContent=uiText('ARTEFATTI · '+visible);const empty=$('[data-artifact-empty]');if(empty)empty.hidden=visible>0;const reports=$('.artifact-reports');if(reports)reports.hidden=!rows.some(row=>row.closest('.artifact-reports')&&!row.hidden)};
+ const apply=()=>{const query=input.value.toLocaleLowerCase().trim();artifactSearch.value=input.value;const rows=$$('[data-artifact-search]',$('#artifacts-panel'));rows.forEach(row=>row.hidden=(!artifactShowHidden&&row.dataset.artifactHidden==='true')||!row.dataset.artifactSearch.includes(query)||!artifactFolderVisible(row.dataset.artifactFolderPath));const files=rows.filter(row=>!row.closest('.artifact-reports')),visible=files.filter(row=>!row.hidden).length;const count=$('[data-artifact-count]');if(count)count.textContent=uiText('ARTEFATTI · '+visible);const empty=$('[data-artifact-empty]');if(empty)empty.hidden=visible>0;const reports=$('.artifact-reports');if(reports)reports.hidden=!rows.some(row=>row.closest('.artifact-reports')&&!row.hidden)};
  const toggle=$('[data-artifact-show-hidden]');if(toggle)toggle.onclick=()=>{artifactShowHidden=!artifactShowHidden;toggle.setAttribute('aria-checked',String(artifactShowHidden));apply()};
+ const filter=$('[data-artifact-filter]');if(filter){filter.onclick=artifactFolderDialog;filter.setAttribute('aria-pressed',String(artifactFolders.hidden.size>0))}
  input.oninput=apply;apply();
 }
 function renderInspector(){
@@ -831,7 +878,7 @@ function renderInspector(){
  const selected=selectedNodeIds();
  const artifactNode=currentWorkflow().nodes.find(n=>n.id===app.selected),stackVisible=(!app.run&&selected.length>1)||!!(artifactNode&&artifactNode.kind!=='Comment');
  $('#inspector-stack').hidden=!stackVisible;
- $('#artifacts-panel').innerHTML=stackVisible?inspectorArtifacts(app.artifacts):'';if(stackVisible)bindArtifactSearch();
+ $('#artifacts-panel').innerHTML=stackVisible?inspectorArtifacts(app.artifacts):'';if(stackVisible)bindArtifactSearch();refreshArtifactFolderDialog();
  if(!app.run&&selected.length>1){$('#inspector').hidden=false;$('#inspector').innerHTML=`<div class="panel-heading">${icon('workflow')}<b>${selected.length} ${esc(uiText('nodi selezionati'))}</b><div class="spacer"></div><button type="button" class="icon-button" data-action="clear-node-selection" aria-label="${esc(uiText('Deseleziona'))}">${icon('x')}</button></div><p class="note">Trascina uno dei nodi selezionati per spostare il gruppo. Shift + clic aggiunge o rimuove un nodo.</p><button type="button" class="danger" data-action="delete-selected-nodes">${icon('trash-2')}${esc(uiText('Cancella selezione'))}</button>`;return}
  const n=currentWorkflow().nodes.find(n=>n.id===app.selected);$('#inspector').hidden=!n||n.kind==='Comment';if(!n||n.kind==='Comment'){$('#inspector').replaceChildren();return}let fields=input('Nome','title',n.title)+input('Fase','phase',n.phase||'Workflow');const agents=currentWorkflow().nodes.filter(n=>n.kind==='Agent').map(n=>[n.id,n.title]);if(n.kind==='A2A')fields+=select('Agente remoto','a2a_id',n.a2a_id||'',[['','Seleziona connessione'],...a2aConnections.map(c=>[c.id,c.name])])+`<label>Richiesta<textarea name="prompt" rows="6">${esc(n.prompt||'')}</textarea></label><button type="button" data-action="a2a-connections">Connessioni A2A</button><button type="button" data-action="a2a-probe">Verifica Agent Card</button><p class="note">Invia richiesta, input della run e contesto a monte. I chiarimenti riprendono lo stesso task remoto.</p>`;if(n.kind==='Agent')fields+=select('Runtime','runtime',n.runtime||'', [['','Preferenza personale'],['codex','Codex'],['claude','Claude Code'],['pi','Pi Agent']])+piNodeFields(n)+input('Modello (vuoto = configurazione personale)','model',n.model||'');if(['Task','Gate'].includes(n.kind)||n.kind==='Review')fields+=select('Agent','agent',n.agent||'', [['','Seleziona Agent'],...agents]);if(n.kind==='Task')fields+=input('Skill Spec Kit (es. implement)','command',n.command||'');if(['Task','Gate','Review'].includes(n.kind))fields+=`<label>Prompt / criteri<textarea name="prompt" rows="7">${esc(n.prompt)}</textarea></label>`;if(n.kind==='Gate')fields+=input('Esiti separati da virgola','outcomes',(n.outcomes||[]).join(', '))+input('Limite rework','max_rework',n.max_rework??2,'number')+select('Richiede test deterministici','require_tests',String(!!n.require_tests),[['false','No'],['true','Sì']]);if(n.kind==='Gate')fields+=select('Verifica chiusura task','require_tasks_closed',String(!!n.require_tasks_closed),[['false','No'],['true','Sì']])+input('Percorso tasks.md (vuoto = feature unica)','location',n.location||'');if(n.kind==='Review')fields+=select('Review','mode',n.mode||'agent_and_human',[['human','Umana'],['agent','Agente in contesto separato'],['agent_and_human','Agente + approvazione umana']])+input('Limite rework','max_rework',n.max_rework??2,'number');if(n.kind==='Source')fields+=select('Tipo Source','source_type',n.source_type||'example',[['example','Repository precaricato'],['folder','Folder in /sources'],['examples','Folder in examples'],['git','Repository Git HTTPS']])+sourcePathField(n)+sourceModeFields(n)+`<button type="button" data-action="browse-source">${icon('folder-git-2')}Sfoglia Storage</button>`;if(n.kind==='Memory')fields+=select('Task sorgente','agent',n.agent||'',[['','Seleziona Task'],...currentWorkflow().nodes.filter(n=>n.kind==='Task').map(n=>[n.id,n.title])])+select('Agent destinatario','target',n.target||'',[['','Seleziona Agent'],...agents]);if(n.kind==='Connection')fields+=select('Provider','provider',n.provider||'local',[['local','Git / CI locali'],['github','GitHub'],['azure','Azure DevOps'],['servicenow','ServiceNow'],['atlassian','Bitbucket / Atlassian TWG']])+`<div id="connection-fields">${connectionFields(n)}</div>`;if(n.kind==='RAG')fields+=select('Cartella indicizzata','rag_index',n.rag_index||'',[['','Seleziona indice RAG'],...ragCatalog.filter(i=>i.directory&&i.generation).map(i=>[i.id,i.name+' · '+i.root+'/'+i.path])])+select('Modalità di ricerca','rag_mode',n.rag_mode||'',[['','Configurazione indice'],['hybrid','Hybrid'],['semantic','Semantic'],['keyword','Keyword']])+input('Risultati per ricerca','rag_top_k',n.rag_top_k??8,'number')+`<button type="button" data-action="rag-node-manage">${icon('database-rag')}Gestisci indice</button><p class="note">Collega questo nodo a un Agent con un arco context. Ricerca, stato, elenco documenti e lettura chunk si aggiungono ai tool nativi. L’indice descrive la sorgente, non le modifiche successive nel workspace.</p>`;if(n.kind==='MCP')fields+=select('Server MCP personale','mcp_id',n.mcp_id||'',[['','Seleziona server MCP'],...Object.entries(app.settings.mcp_servers||{}).map(([id,c])=>[id,c.name||id])])+`<label>Tool consentiti (vuoto = tutti)<textarea name="mcp_tools" rows="4">${esc((n.mcp_tools||[]).join('\n'))}</textarea></label><div class="actions"><button type="button" data-action="mcp-node-probe">${icon('list-checks')}Scopri e seleziona tool</button><button type="button" data-action="mcp-settings">${icon('settings-2')}Server MCP personali</button></div><p class="note">Collega la porta di uscita a un Agent con un arco context. I tool nativi restano disponibili.</p>`;if(n.kind==='Workflow')fields+=select('Workflow da richiamare','workflow_id',n.workflow_id||'',[['','Seleziona workflow'],...app.workflows.filter(w=>w.id!==currentWorkflow().id).map(w=>[w.id,w.name])])+`<label>Contesto da passare<textarea name="prompt" rows="5">${esc(n.prompt||'')}</textarea></label><p class="note">Sessioni separate. Workspace ereditato dal chiamante; i Source del figlio non vengono ricopiati. Il padre attende il completamento.</p>`;if(n.kind==='Fork')fields+=select('Nodo di ricongiungimento','target',n.target||'',[['','Seleziona Join'],...currentWorkflow().nodes.filter(j=>j.kind==='Join').map(j=>[j.id,j.title])])+`<p class="note">Collega almeno due rami di Task, ciascuno con un Agent distinto. Tutti i rami devono terminare nel Join selezionato. Il piano del Task precedente viene passato automaticamente a ogni agente, senza Memory. Il workspace è condiviso: assegna file diversi ai rami.</p>`;if(n.kind==='Join')fields+=`<p class="note">Attende tutti i rami del Fork e trasferisce i risultati agli agenti dei Task successivi, senza Memory.</p>`;const edges=currentWorkflow().edges.filter(e=>e.from===n.id||e.to===n.id);$('#inspector').innerHTML=`<div class="panel-heading">${nodeIcon(n)}<b>${esc(n.kind)}</b>${nodeService(n)?`<span class="small">${esc(nodeLabel(n))}</span>`:''}<div class="spacer"></div><button class="icon-button" data-action="close-inspector" aria-label="Chiudi dettagli">${icon('x')}</button></div>${app.run?`<p class="note">Run ${esc(app.run.id.slice(0,8))} · ${esc(states[state(n)])}<br>La configurazione del run è congelata.</p>`:''}<form id="node-form" data-workflow-id="${esc(currentWorkflow().id)}" data-node-id="${esc(n.id)}" class="inspector-form"><fieldset ${app.run?'disabled':''} style="border:0;margin:0;padding:0;display:grid;gap:15px">${fields}</fieldset><div class="actions">${!app.run?`<button type="button" class="icon-button" data-action="save-inspector" data-tip="Salva" aria-label="Salva">${icon('save')}</button><button type="button" data-action="set-entry" data-id="${n.id}" data-tip="Usa come ingresso" aria-label="Usa come ingresso">${icon('log-in')}</button><button type="button" class="danger" data-action="delete-node" data-id="${n.id}" aria-label="Elimina nodo">${icon('trash-2')}</button>`:''}${n.kind==='Review'||app.decisions.some(d=>d.node===n.id)?`<button type="button" data-action="review-history" data-id="${n.id}" data-tip="Storico review" aria-label="Storico review">${icon('history')}</button>`:''}</div></form>${n.kind==='Workflow'&&app.run?childCalls(n.id):''}${app.run?.pending?.node===n.id?'<div class="divider"></div><button data-action="pending" class="review-banner">Apri review o domanda</button>':''}<div class="divider"></div><span class="eyebrow">COLLEGAMENTI</span>${edges.map((e,i)=>`<div class="note code inspector-connection-row"><span>${esc(e.from)} → ${esc(e.to)} · ${esc(e.kind)} ${esc(e.outcome)}</span>${!app.run?`<button type="button" class="icon-button inspector-connection-delete" data-action="delete-edge" data-index="${currentWorkflow().edges.indexOf(e)}" aria-label="Rimuovi arco">${icon('x')}</button>`:''}</div>`).join('')}${!edges.length?'<p class="note">Usa le porte del nodo per collegarlo.</p>':''}`;const artifactList=$('[data-inspector-artifacts]');if(artifactList)artifactList.scrollTop=artifactScroll;if(artifactFocus){const query=$('[data-artifact-query]');query?.focus({preventScroll:true});query?.setSelectionRange(artifactSelection,artifactSelection)}if(n.kind==='Source'){loadSourceFolderOptions($('#node-form'));if(app.editBase){for(const name of ['source_type','source_mode','location'])$('#node-form').elements[name].disabled=true;$('[data-source-folder-toggle]')?.setAttribute('hidden','');const browse=$('[data-action="browse-source"]');if(browse)browse.disabled=true;$('#source-folder-hint').hidden=false;$('#source-folder-hint').textContent=uiText('Le Source restano quelle della run originale. La ripartenza usa una copia dei file correnti.')}}}
 function childCalls(node){const calls=app.children.filter(c=>c.node===node);if(!calls.length)return '';return `<details class="child-calls" ${app.run?.current===node?'open':''}><summary>${icon('workflow')}<span>Workflow collegati</span><b>${calls.length}</b></summary>${calls.map(c=>`<button type="button" class="child-run-link" data-action="load-run" data-id="${esc(c.id)}" data-status="${esc(c.status)}">${icon(['waiting_review','waiting_user'].includes(c.status)?'circle-help':'workflow')}<span><b data-no-i18n>${esc(c.name)}</b><small><span data-no-i18n>${esc(c.id.slice(0,8))}</span> · ${esc(states[c.status]||c.status)}</small></span>${icon('log-in')}</button>`).join('')}</details>`}
@@ -1555,15 +1602,6 @@ $('#palette-items').addEventListener('pointercancel',cancelPaletteDrag);
 $('#palette-items').addEventListener('lostpointercapture',e=>{if(paletteDrag?.pointer===e.pointerId)cancelPaletteDrag()});
 window.addEventListener('blur',cancelPaletteDrag);
 const authForm=$('#auth-form');
-for(const type of ['input','change'])authForm.addEventListener(type,event=>{
- const field=event.target;if(!['email','password'].includes(field.name)||authForm.authAutofillAllowed)return;
- if(event.isTrusted&&document.activeElement===field&&event instanceof InputEvent&&/^(insertText|insertFromPaste|insertFromDrop|insertCompositionText|insertFromComposition|delete.*|historyUndo|historyRedo)$/.test(event.inputType)){
-  authForm.authDraft??={email:'',password:''};authForm.authDraft[field.name]=field.value;
- }else restoreAuthField(field);
-});
-authForm.addEventListener('focusin',event=>restoreAuthField(event.target));
-authForm.addEventListener('animationstart',event=>{if(event.animationName==='rightcommit-auth-autofill')restoreAuthField(event.target)});
-$('#auth-autofill').onclick=()=>{const enabled=!authForm.authAutofillAllowed;if(!enabled)resetAuthForm();else configureAuthAutofill(true);authForm.elements.email.focus()};
 authForm.addEventListener('submit',async event=>{
  event.preventDefault();$('#auth-error').textContent='';const body=authCredentials(event.target);if(!body)return;
  $('#auth-submit').disabled=true;
@@ -1761,12 +1799,12 @@ function storageRoots(root,includeRuns=false,actions=storageHiddenControl()){ret
 async function openStorage(path='',root='sources'){
  try{await ragRefresh();const d=await api('/storage?path='+encodeURIComponent(path)+'&root='+encodeURIComponent(root));storagePath=path;
  const parts=path.split('/').filter(Boolean);const crumbs=[['',root==='workspaces'?uiText('Esecuzioni'):root],...parts.map((p,i)=>[parts.slice(0,i+1).join('/'),p])];
- const ragAction=(root!=='workspaces'||path)&&!path.split('/').includes('.nodo')?`<div class="rag-folder-action">${ragButton(root,path,uiText('Indice RAG'))}</div>`:'';
+ const ragAction=(root!=='workspaces'||path)&&!path.split('/').some(p=>['.rightcommit','.nodo'].includes(p))?`<div class="rag-folder-action">${ragButton(root,path,uiText('Indice RAG'))}</div>`:'';
  const sourceNote=root==='sources'?'<p class="note storage-source-note">Le Source in modalità permanente vengono modificate direttamente. Le altre usano copie nel workspace.</p>':'';
  const toolbar=storageRoots(root,true,ragAction)+`<nav class="storage-breadcrumb" aria-label="Percorso">${crumbs.map(([p,n])=>`<button data-storage-path="${esc(p)}">${esc(n)}</button>`).join('<span>/</span>')}</nav>`+(d.file?sourceNote:'');
  const resultDownload=root==='workspaces'&&parts.length?`<a class="storage-picker" href="/api/storage/download?root=workspaces&path=${encodeURIComponent(parts[0])}" download>${icon('download')}Scarica risultato ZIP</a>`:'';
  const controls=root==='workspaces'?'<p class="note">File delle tue esecuzioni. In modalità permanente mostrano il contenuto attuale condiviso della sorgente. Consultazione e download; build e cartelle Git esclusi dallo ZIP.</p>':root==='examples'?'<p class="note">Examples precaricati: navigazione e download disponibili, archivio di sola lettura.</p>':`<div class="storage-actions"><label class="storage-picker">${icon('file-text')}Carica file<input id="storage-files" type="file" multiple hidden></label><label class="storage-picker">${icon('folder-git-2')}Carica cartella<input id="storage-folder" type="file" webkitdirectory multiple hidden></label><span class="small">Massimo 50 MB per file · nomi esistenti preservati</span></div>`;
- modal('Storage',toolbar+resultDownload+(d.file?`<div class="storage-file-head"><span>${icon('file-text')}${esc(parts.at(-1))}</span><a class="storage-picker" href="/api/storage/download?path=${encodeURIComponent(path)}&root=${root}" download>Scarica ZIP</a></div>${d.preview===null?`<p class="note">${esc(filePreviewMessage(d))}</p>`:d.html?`<div class="markdown storage-markdown">${d.html}</div>`:`<pre class="source-view storage-preview">${esc(d.preview)}</pre>`}`:controls+(root!=='sources'?'':`<div id="storage-drop" class="storage-drop" tabindex="0"><span>${icon('folder-git-2')}Trascina qui file o cartelle per caricarli in /sources/${esc(path)}</span><div id="storage-progress" role="status" aria-live="polite"></div></div>`)+`<div class="storage-list-controls"><div class="storage-list-actions">${storageHiddenControl()}<button type="button" class="storage-refresh" data-storage-refresh>${icon('refresh-cw')}Aggiorna</button></div>${sourceNote}</div><div class="storage-table">${d.entries.map(e=>{const p=storageJoin(path,e.name);return `<div class="storage-row" ${storageHiddenAttrs(e)}><button class="storage-entry" data-storage-path="${esc(p)}">${icon(e.directory?'folder-git-2':'file-text')}<span>${esc(e.label||e.name)}</span></button><span class="small">${e.status?esc(states[e.status]||e.status)+(e.source_mode==='direct'?' · '+uiText('Sorgente originale — contenuto attuale condiviso'):''):e.directory?'Cartella':storageSize(e.size)}</span>${e.name!=='.nodo'?ragButton(root,p):''}<a class="icon-button" data-tip="Scarica ZIP" aria-label="Scarica ZIP di ${esc(e.name)}" href="/api/storage/download?path=${encodeURIComponent(p)}&root=${root}" download>${icon('download')}</a></div>`}).join('')}<p class="note storage-empty" data-storage-empty>Nessun elemento visibile.</p></div>`),'',true);
+ modal('Storage',toolbar+resultDownload+(d.file?`<div class="storage-file-head"><span>${icon('file-text')}${esc(parts.at(-1))}</span><a class="storage-picker" href="/api/storage/download?path=${encodeURIComponent(path)}&root=${root}" download>Scarica ZIP</a></div>${d.preview===null?`<p class="note">${esc(filePreviewMessage(d))}</p>`:d.html?`<div class="markdown storage-markdown">${d.html}</div>`:`<pre class="source-view storage-preview">${esc(d.preview)}</pre>`}`:controls+(root!=='sources'?'':`<div id="storage-drop" class="storage-drop" tabindex="0"><span>${icon('folder-git-2')}Trascina qui file o cartelle per caricarli in /sources/${esc(path)}</span><div id="storage-progress" role="status" aria-live="polite"></div></div>`)+`<div class="storage-list-controls"><div class="storage-list-actions">${storageHiddenControl()}<button type="button" class="storage-refresh" data-storage-refresh>${icon('refresh-cw')}Aggiorna</button></div>${sourceNote}</div><div class="storage-table">${d.entries.map(e=>{const p=storageJoin(path,e.name);return `<div class="storage-row" ${storageHiddenAttrs(e)}><button class="storage-entry" data-storage-path="${esc(p)}">${icon(e.directory?'folder-git-2':'file-text')}<span>${esc(e.label||e.name)}</span></button><span class="small">${e.status?esc(states[e.status]||e.status)+(e.source_mode==='direct'?' · '+uiText('Sorgente originale — contenuto attuale condiviso'):''):e.directory?'Cartella':storageSize(e.size)}</span>${!['.rightcommit','.nodo'].includes(e.name)?ragButton(root,p):''}<a class="icon-button" data-tip="Scarica ZIP" aria-label="Scarica ZIP di ${esc(e.name)}" href="/api/storage/download?path=${encodeURIComponent(p)}&root=${root}" download>${icon('download')}</a></div>`}).join('')}<p class="note storage-empty" data-storage-empty>Nessun elemento visibile.</p></div>`),'',true);
  bindStorageHidden();bindRagStorage();
  const refresh=$('[data-storage-refresh]');if(refresh)refresh.onclick=async()=>{
   if(storageBusy)return;refresh.disabled=true;

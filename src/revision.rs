@@ -128,11 +128,12 @@ pub fn is_available(app: &App, uid: i64, r: &Run) -> bool {
     available(app, uid, r).is_ok()
 }
 fn sources(w: &Workflow) -> Vec<Value> {
-    w.nodes
-        .iter()
-        .filter(|n| n.kind == "Source")
-        .map(signature)
-        .collect()
+    let mut nodes: Vec<_> = w.nodes.iter().filter(|n| n.kind == "Source").collect();
+    nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    nodes.into_iter().map(|n| json!({
+        "id": n.id, "source_type": n.source_type,
+        "location": n.location, "source_mode": n.source_mode
+    })).collect()
 }
 fn source_roots(r: &Run) -> Vec<(String, PathBuf)> {
     r.workflow
@@ -477,7 +478,7 @@ fn finish_plan(app: &App, uid: i64, r: &Run, w: &Workflow, p: &mut Plan) -> Resu
         if !root.starts_with(&r.workspace) {
             files(
                 &root,
-                &format!(".nodo/sources/{id}/"),
+                &format!(".rightcommit/sources/{id}/"),
                 &mut p.workspace_files,
             )?;
         }
@@ -532,10 +533,10 @@ pub async fn create(
         let mut context = BTreeMap::new();
         for (index,(source, root)) in source_roots(&old).into_iter().enumerate() {
             if index == 0 { context.insert(format!("source-path:{source}"), ".".into()); continue; }
-            let target = dest.join(".nodo/sources").join(&source);
+            let target = dest.join(".rightcommit/sources").join(&source);
             if target.exists() { std::fs::remove_dir_all(&target)?; }
             agents::copy_tree(&root, &target)?;
-            context.insert(format!("source-path:{source}"), format!(".nodo/sources/{source}"));
+            context.insert(format!("source-path:{source}"), format!(".rightcommit/sources/{source}"));
         }
         ensure!(fingerprint(&old)? == proof, "I file sono cambiati durante la copia: aggiorna l’anteprima");
         agents::own_tree(app, uid, &dest)?;
@@ -690,6 +691,22 @@ mod tests {
         let mut w = r.workflow.clone();
         w.execution.max_decisions += 1;
         assert!(preview(&app, 1, &r.id, &w, None).unwrap().kept.is_empty());
+    }
+    #[tokio::test]
+    async fn source_comparison_ignores_order_and_unrelated_fields() {
+        let (_dir, app, r) = fixture().await;
+        let mut w = insert(&r);
+        w.nodes[0].prompt = "Manager changed an irrelevant field".into();
+        w.nodes.reverse();
+        assert!(preview(&app, 1, &r.id, &w, None).is_ok());
+        for field in ["source_type", "source_mode", "location", "id"] {
+            let mut changed = serde_json::to_value(&w).unwrap();
+            let source = changed["nodes"].as_array_mut().unwrap().iter_mut()
+                .find(|n| n["kind"] == "Source").unwrap();
+            source[field] = json!("different");
+            let changed: Workflow = serde_json::from_value(changed).unwrap();
+            assert!(preview(&app, 1, &r.id, &changed, None).is_err(), "{field}");
+        }
     }
     #[tokio::test]
     async fn source_changes_and_busy_or_foreign_runs_are_rejected() {
@@ -1013,6 +1030,25 @@ runtime: "codex".into(),
                 .to_string()
                 .contains("Più rami per lo stesso esito")
         );
+    }
+    #[tokio::test]
+    async fn legacy_secondary_sources_restart_under_rightcommit() {
+        let (_dir, app, mut r) = fixture().await;
+        let mut source = r.workflow.nodes[0].clone();
+        source.id = "secondary".into();
+        r.workflow.nodes.push(source.clone());
+        r.workflow.edges.push(Edge { from: "secondary".into(), to: "agent".into(), kind: "context".into(), outcome: String::new() });
+        let legacy = Path::new(&r.workspace).join(".nodo/sources/secondary");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(legacy.join("evidence.txt"), "legacy evidence").unwrap();
+        assert_eq!(crate::source_access::source_path(&r, 1, &source), ".nodo/sources/secondary");
+        app.store.save_run(1, &r).unwrap();
+        let w = insert(&r);
+        let p = preview(&app, 1, &r.id, &w, None).unwrap();
+        let (fork, _) = create(&app, 1, &r.id, w, None, &p.token).await.unwrap();
+        assert_eq!(crate::source_access::source_path(&fork, 1, &source), ".rightcommit/sources/secondary");
+        assert_eq!(std::fs::read_to_string(Path::new(&fork.workspace).join(".rightcommit/sources/secondary/evidence.txt")).unwrap(), "legacy evidence");
+        assert!(legacy.join("evidence.txt").exists());
     }
     #[tokio::test]
     async fn direct_sources_become_independent_copies() {

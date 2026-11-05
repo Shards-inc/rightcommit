@@ -301,7 +301,7 @@ pub fn snapshot(
         )?;
     }
     if !summary.is_empty() {
-        let path = format!(".nodo/reports/{node}.md");
+        let path = format!(".rightcommit/reports/{node}.md");
         let prior = previous
             .iter()
             .rev()
@@ -309,7 +309,7 @@ pub fn snapshot(
         let lineage = crate::subworkflows::ancestors(app, uid, run)?;
         let root = lineage.last().unwrap_or(run);
         let location = app.data.join(format!(
-            "users/{uid}/workspaces/{}/.nodo/reports/{node}.md",
+            "users/{uid}/workspaces/{}/.rightcommit/reports/{node}.md",
             root.id
         ));
         app.store.add_artifact(
@@ -420,7 +420,7 @@ pub fn file_info(app: &App, uid: i64, run: &Run, artifact: &Artifact) -> Artifac
         app,
         run,
         &location.to_string_lossy(),
-        if artifact.path.starts_with(".nodo/reports/") {
+        if crate::source_access::report_path(&artifact.path) {
             "report"
         } else {
             "legacy"
@@ -635,7 +635,7 @@ mod tests {
             run_folder.clone()
         };
         let second = app.sources.join("second");
-        let copied = run_folder.join(".nodo/sources/copied");
+        let copied = run_folder.join(".rightcommit/sources/copied");
         for p in [&workspace, &second, &copied] {
             std::fs::create_dir_all(p).unwrap();
             std::fs::write(p.join("original.txt"), "original").unwrap();

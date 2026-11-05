@@ -9,29 +9,25 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   browser=await chromium.launch({channel:'chrome',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[],authPosts=[];page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.method()==='POST'&&/\/api\/auth\/(login|register)$/.test(request.url()))authPosts.push(request.postDataJSON())});
   for(const file of ['app.js','app.css','i18n.js','controls.js'])await page.route('**/'+file,route=>route.fulfill({path:path.resolve('web/'+file)}));await page.route(base+'/',route=>route.fulfill({path:path.resolve('web/index.html'),contentType:'text/html'}));
   await page.goto(base);await page.locator('#auth').waitFor({state:'visible'});assert((await page.locator('#auth-submit').textContent()).includes('Create administrator'));
-  const email=page.locator('#auth-form [name=email]'),password=page.locator('#auth-form [name=password]'),manager=page.locator('#auth-autofill');
-  assert.equal(await page.locator('label[for=rightcommit-login-email]').textContent(),'Account email');assert.equal(await page.locator('label[for=rightcommit-login-password]').textContent(),'Account password');assert.equal(await page.locator('#auth-credentials-note').evaluate(el=>getComputedStyle(el).textAlign),'center');
-  assert.equal(await email.getAttribute('autocomplete'),'off');assert.equal(await password.getAttribute('autocomplete'),'off');assert.equal(await manager.getAttribute('aria-pressed'),'false');assert.equal(await password.getAttribute('data-1p-ignore'),'true');
-  // A manager sets input properties without events: the submission guard restores the safe draft.
-  await page.evaluate(()=>{const form=document.querySelector('#auth-form');form.elements.email.value='servicenow@example.local';form.elements.password.value='connector-only-password';form.requestSubmit()});
-  assert.equal(await email.inputValue(),'');assert.equal(await password.inputValue(),'');assert((await page.locator('#auth-error').textContent()).includes('Unrequested autofill'));assert.equal(authPosts.length,0);
-  // Background input/change events and focused synthetic replacements are ignored too.
-  await password.focus();await page.evaluate(()=>{for(const name of ['email','password']){const field=document.querySelector('#auth-form').elements[name];field.value=name==='email'?'servicenow@example.local':'connector-only-password';field.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertReplacementText'}));field.dispatchEvent(new Event('change',{bubbles:true}))}});assert.equal(await email.inputValue(),'');assert.equal(await password.inputValue(),'');
+  const email=page.locator('#auth-form [name=email]'),password=page.locator('#auth-form [name=password]');
+  assert.equal(await page.locator('#auth-autofill').count(),0);
+  assert.equal(await password.getAttribute('autocomplete'),'section-rightcommit-account new-password');
+  assert.equal(await email.getAttribute('autocomplete'),'section-rightcommit-account username');
+  assert.equal(await password.getAttribute('data-1p-ignore'),null);
   const account={email:'rightcommit-login@test.local',password:'temporary-rightcommit-password'};
-  await email.fill(account.email);await password.fill(account.password);await page.locator('#auth-submit').click();await page.locator('#app').waitFor({state:'visible'});assert.equal(authPosts.length,1);assert.deepEqual(authPosts[0],account);assert.equal(await password.inputValue(),'');
+  await email.fill(account.email);await password.fill(account.password);await page.locator('#auth-submit').click();await page.locator('#app').waitFor({state:'visible'});assert.deepEqual(authPosts[0],account);
   const logout=async()=>{await page.evaluate(()=>{if(document.querySelector('#dialog').open)closeModal()});await page.locator('#account').click();await page.locator('#account-menu [data-action=logout]').click();await page.locator('#auth').waitFor({state:'visible'})};
-  await logout();assert.equal(await email.inputValue(),'');assert.equal(await password.inputValue(),'');assert.equal(await page.locator('#auth-submit').textContent(),'Sign in');assert.equal(await manager.getAttribute('aria-pressed'),'false');
-  // Manual credentials cannot be replaced in the background just before submission.
-  await email.fill(account.email);await password.fill(account.password);await page.evaluate(()=>{const form=document.querySelector('#auth-form');form.elements.email.value='servicenow@example.local';form.elements.password.value='connector-only-password';form.requestSubmit()});assert.equal(authPosts.length,1);assert.equal(await email.inputValue(),account.email);assert.equal(await password.inputValue(),account.password);
-  await page.locator('#auth-submit').click();await page.locator('#app').waitFor({state:'visible'});assert.equal(authPosts.length,2);assert.deepEqual(authPosts[1],account);
-  await logout();await manager.click();assert.equal(await manager.getAttribute('aria-pressed'),'true');assert.equal(await password.getAttribute('autocomplete'),'section-rightcommit-account current-password');assert.equal(await password.getAttribute('data-1p-ignore'),null);
-  await page.evaluate(account=>{const form=document.querySelector('#auth-form');for(const name of ['email','password']){form.elements[name].value=account[name];form.elements[name].dispatchEvent(new Event('input',{bubbles:true}))}},account);
-  await page.locator('#auth-submit').click();await page.locator('#app').waitFor({state:'visible'});assert.equal(authPosts.length,3);assert.deepEqual(authPosts[2],account);
-  await logout();await manager.click();await page.evaluate(()=>{const form=document.querySelector('#auth-form');form.elements.email.value='saved@example.local';form.elements.password.value='saved-credential-password'});await manager.click();assert.equal(await email.inputValue(),'');assert.equal(await password.inputValue(),'');assert.equal(await manager.getAttribute('aria-pressed'),'false');
-  await page.locator('#auth-switch').click();assert.equal(await page.locator('#auth-submit').textContent(),'Register');await manager.click();assert.equal(await password.getAttribute('autocomplete'),'section-rightcommit-account new-password');await page.locator('#auth-switch').click();assert.equal(await manager.getAttribute('aria-pressed'),'false');
-  await page.evaluate(()=>{const language=document.querySelector('[data-language]');language.value='it';language.dispatchEvent(new Event('change',{bubbles:true}))});assert.equal(await manager.textContent(),'Usa gestore password');
+  await logout();assert.equal(await email.inputValue(),'');assert.equal(await password.inputValue(),'');
+  assert.equal(await password.getAttribute('autocomplete'),'section-rightcommit-account current-password');
+  // Saved credentials can be submitted directly, even without input events.
+  await page.evaluate(account=>{const form=document.querySelector('#auth-form');form.elements.email.value=account.email;form.elements.password.value=account.password;form.requestSubmit()},account);
+  await page.locator('#app').waitFor({state:'visible'});assert.equal(authPosts.length,2);assert.deepEqual(authPosts[1],account);
+  await logout();await page.locator('#auth-switch').click();assert.equal(await password.getAttribute('autocomplete'),'section-rightcommit-account new-password');
+  await page.locator('#auth-switch').click();assert.equal(await password.getAttribute('autocomplete'),'section-rightcommit-account current-password');
   await page.setViewportSize({width:390,height:844});assert(await page.locator('.auth-card').evaluate(el=>el.getBoundingClientRect().right<=innerWidth&&el.scrollWidth<=el.clientWidth));await page.screenshot({path:'/tmp/rightcommit-login-autofill-mobile.png'});
-  assert.deepEqual(errors,[]);assert(!JSON.stringify(authPosts).includes('connector-only-password'));
-  console.log('PASS: default autofill off, ignored background/eventless connector credentials, trusted manual registration/login, explicit saved credentials, logout clears secrets, registration mode semantics, IT/EN and mobile');
+  await page.locator('#auth-switch').click();assert.equal(await page.locator('#auth-switch').textContent(),'Back to login');await page.screenshot({path:'/tmp/rightcommit-register-mobile.png'});
+  await page.locator('#auth-switch').click();assert.equal(await page.locator('#auth-switch').textContent(),'Create an account');
+  assert.deepEqual(errors,[]);
+  console.log('PASS: standard autofill, manual registration, saved credential login without opt-in, logout clears secrets, registration mode and mobile');
  }finally{await browser?.close();server.kill('SIGINT');await new Promise(r=>server.exitCode!==null?r():server.once('exit',r));fs.rmSync(data,{recursive:true,force:true})}
 })().catch(error=>{console.error(error);process.exit(1)});

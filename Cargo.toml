@@ -1,6 +1,6 @@
 [package]
 name = "rightcommit"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 license = "FSL-1.1-ALv2"
 description = "Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent. Parallel workflows, full control over every commit, and FinOps that shows exactly what each agent and model costs."

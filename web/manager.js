@@ -133,7 +133,13 @@
   try{const q=new URLSearchParams({workflow_id:currentWorkflow().id});if(app.run)q.set('run_id',app.run.id);const history=await api('/manager/chat?'+q);if(request===historyRequest&&key()===next&&state.version===version){state.messages=history.messages;state.runtime=history.runtime;state.conversationId=history.conversation_id;if(history.proposal&&JSON.stringify({...currentWorkflow(),created:0})!==JSON.stringify({...history.proposal.workflow,created:0})){state.proposal=history.proposal.workflow;state.proposalKind=history.proposal.kind;state.warning=history.proposal.warning}renderChat()}}catch(error){if(scope===next){state.error=error.message;renderChat()}}
  }
  window.nodoManagerContextChanged=()=>sync();
- function applyWorkflow(workflow,state){const before=structuredClone(app.wf);app.wf=structuredClone(workflow);state.undo={before,after:JSON.stringify(app.wf)};state.proposal=null;dirty();render();fit();renderChat()}
+ function applyWorkflow(workflow,state){const before=structuredClone(app.wf);workflow=structuredClone(workflow);
+  if(app.editBase){
+   const sources=before.nodes.filter(n=>n.kind==='Source'),proposed=workflow.nodes.filter(n=>n.kind==='Source');
+   if(sources.length!==proposed.length||sources.some(n=>!proposed.some(p=>p.id===n.id)))throw Error(uiText('Per conservare il lavoro mantieni le Source originali (tipo, percorso e modalità). Per cambiare sorgente avvia una nuova run.'));
+   for(const source of sources){const node=workflow.nodes.find(n=>n.id===source.id);for(const field of ['source_type','source_mode','location'])node[field]=source[field]}
+  }
+  app.wf=workflow;state.undo={before,after:JSON.stringify(app.wf)};state.proposal=null;dirty();render();fit();renderChat()}
  async function applyPending(state){
   if(!state.proposal)return;
   if(app.run||state.proposalKind==='create'){

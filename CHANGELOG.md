@@ -3,6 +3,34 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.2.1] - 2026-11-05
+
+### Added
+
+- A **Filter** for the run's artifacts: choose which folders to show, in a tree you can
+  expand and collapse. Hiding a folder also hides its subfolders, and the files are kept.
+  `target/debug` folders are hidden by default.
+
+### Changed
+
+- New runs keep their internal files (reports and copied sources) in `.rightcommit` instead
+  of `.nodo`. Runs saved with `.nodo` can still be opened, and a revision copies their
+  sources into `.rightcommit`.
+- The login form works with password managers like any other login, without a separate
+  switch. The link under the registration form now reads **Back to login**.
+- With Docker or Podman, `NODO_ALLOW_REGISTRATION`, `NODO_SECURE_COOKIE`,
+  `NODO_CONNECTOR_HOSTS` and `RUST_LOG` can be set in `.env`. The defaults are unchanged:
+  registration closed and cookies for local HTTP.
+- `.env.example` groups the settings by purpose and documents the options for native
+  installs. [INSTALL_MAC.md](INSTALL_MAC.md) explains where to put `.env` with Homebrew.
+- The README is shorter and gives an overview of how to use rightcommit.
+
+### Fixed
+
+- A revision of a run is no longer refused when the Manager reorders the workflow or changes
+  fields that do not affect its Sources.
+- Error messages appear above open dialogs instead of behind them.
+
 ## [1.2.0] - 2026-11-04
 
 ### Added

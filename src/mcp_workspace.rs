@@ -17,7 +17,7 @@ impl Workspace {
         anyhow::ensure!(
             !path.is_absolute()
                 && !path.components().any(|c| matches!(c, Component::ParentDir)
-                    || [".git", ".nodo"].iter().any(|name| c.as_os_str() == *name)),
+                    || [".git", ".nodo", ".rightcommit"].iter().any(|name| c.as_os_str() == *name)),
             "Percorso non consentito"
         );
         let p = std::fs::canonicalize(self.root.join(path))?;
@@ -73,6 +73,7 @@ impl ServerHandler for Workspace {
                             !e.path().is_symlink()
                                 && e.file_name() != ".git"
                                 && e.file_name() != ".nodo"
+                                && e.file_name() != ".rightcommit"
                         })
                         .take(1000)
                         .map(|e| e.file_name().to_string_lossy().into_owned())

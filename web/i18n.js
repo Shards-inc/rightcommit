@@ -168,11 +168,6 @@ const en={
 "Registrati":"Register",
 "Email account":"Account email",
 "Password account":"Account password",
-"Usa gestore password":"Use password manager",
-"Disattiva compilazione automatica":"Turn off autofill",
-"Inserisci i dati del tuo account rightcommit. Per usare le credenziali salvate, abilita il gestore password.":"Enter your rightcommit account details. To use saved credentials, enable the password manager.",
-"Gestore password abilitato per il tuo account rightcommit.":"Password manager enabled for your rightcommit account.",
-"La compilazione automatica non richiesta è stata ignorata. Inserisci i dati del tuo account rightcommit o abilita il gestore password.":"Unrequested autofill was ignored. Enter your rightcommit account details or enable the password manager.",
 
 "Provider disponibili":"Providers available",
 "Provider predefinito Pi":"Default Pi provider",
@@ -935,6 +930,14 @@ const en={
   "Crea il tuo workspace": "Create your workspace",
   "Crea amministratore": "Create administrator",
   "Crea un account": "Create an account",
+  "Filtra": "Filter",
+  "Filtra artefatti": "Filter artifacts",
+  "Mostra cartella": "Show folder",
+  "Espandi cartella": "Expand folder",
+  "Comprimi cartella": "Collapse folder",
+  "Nessuna cartella disponibile.": "No folders available.",
+  "Scegli le cartelle da mostrare. Nascondere una cartella esclude anche tutte le sue sottocartelle. I file restano conservati.": "Choose which folders to show. Hiding a folder also excludes all its subfolders. Files are preserved.",
+  "Torna al login": "Back to login",
   "Workflow reali. Sessioni persistenti. Un unico spazio di lavoro.": "Real workflows. Persistent sessions. One workspace.",
   "Workflow reali. Sessioni persistenti.": "Real workflows. Persistent sessions.",
   "Un unico spazio di lavoro.": "One workspace.",
@@ -1245,7 +1248,7 @@ const en={
 "Includi file nascosti":"Include hidden files",
 "Limite per file (MB)":"Per-file limit (MB)",
 "Estensioni per cartelle (separate da virgola)":"Folder extensions (comma separated)",
-"Un file selezionato direttamente viene letto come testo UTF-8 anche senza estensione. Esclusi link simbolici, binari e cartelle .git, target, node_modules, .venv, .nodo. Massimo 5000 file / 128 MB / 50000 chunk.":"A directly selected file is read as UTF-8 text even without an extension. Symlinks, binaries and .git, target, node_modules, .venv, .nodo folders excluded. Maximum 5000 files / 128 MB / 50000 chunks.",
+"Un file selezionato direttamente viene letto come testo UTF-8 anche senza estensione. Esclusi link simbolici, binari e cartelle .git, target, node_modules, .venv, .rightcommit, .nodo. Massimo 5000 file / 128 MB / 50000 chunk.":"A directly selected file is read as UTF-8 text even without an extension. Symlinks, binaries and .git, target, node_modules, .venv, .rightcommit, .nodo folders excluded. Maximum 5000 files / 128 MB / 50000 chunks.",
 "Note indicizzazione":"Indexing notes",
 "Prova ricerca":"Test search",
 "Cerca nel contenuto indicizzato…":"Search indexed content…",
@@ -1532,6 +1535,7 @@ function canonical(value){
  if((m=key.match(/^Field (.+) is empty or too large$/)))return 'Campo '+m[1]+' vuoto o troppo grande';
  if((m=key.match(/^Agent available: (.+)$/)))return 'Agente disponibile: '+m[1];
  if((m=key.match(/^Invalid JSON format: (.+)$/)))return 'Formato JSON non valido: '+m[1];
+ if((m=key.match(/^(Show folder|Expand folder|Collapse folder) (.+)$/)))return ({'Show folder':'Mostra cartella','Expand folder':'Espandi cartella','Collapse folder':'Comprimi cartella'}[m[1]])+' '+m[2];
  if((m=key.match(/^New (.+)$/)))return 'Nuovo '+canonical(m[1]);
  if((m=key.match(/^(\d+) completed turns$/)))return m[1]+' turni completati';
  if((m=key.match(/^(\d+) OpenRouter models available\. Type to search\.$/)))return m[1]+' modelli OpenRouter disponibili. Digita per cercare.';
@@ -1547,6 +1551,7 @@ function text(value){
  const trimmed=value.trim(),padding=value.match(/^\s*/)[0],tail=value.match(/\s*$/)[0];
  if(en[trimmed])return padding+en[trimmed]+tail;
  let m;
+ if((m=trimmed.match(/^(Mostra cartella|Espandi cartella|Comprimi cartella) (.+)$/)))return padding+en[m[1]]+' '+m[2]+tail;
  if((m=trimmed.match(/^Agent (.+?): (.+)$/)))return 'Agent '+m[1]+': '+text(m[2]);
  if((m=trimmed.match(/^Provider Pi non supportato: (.+)$/)))return 'Unsupported Pi provider: '+m[1];
  if((m=trimmed.match(/^Configurazione Pi mancante per (.+)\. Configura le credenziali e i parametri del provider in \.env o nel login nativo Pi\.$/)))return 'Missing Pi configuration for '+m[1]+'. Configure provider credentials and parameters in .env or native Pi login.';

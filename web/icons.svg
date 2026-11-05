@@ -248,4 +248,7 @@
 <!-- Retired provider logo; retained for reference.
 <symbol id="brand-bitbucket" viewBox="0 0 24 24"><path d="M2 3a1 1 0 0 0-1 1.16l3 17a1 1 0 0 0 1 .84h14a1 1 0 0 0 1-.84l3-17A1 1 0 0 0 22 3Zm7 6h6l-1 7h-4Z" fill-rule="evenodd"/></symbol>
 -->
+<symbol id="chevron-right" viewBox="0 0 24 24">
+  <path d="m9 6 6 6-6 6" />
+</symbol>
 </svg>

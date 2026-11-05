@@ -26,7 +26,14 @@ pub fn source_path(r: &Run, index: usize, n: &Node) -> String {
             if index == 0 {
                 ".".into()
             } else {
-                format!(".nodo/sources/{}", n.id)
+                let current = format!(".rightcommit/sources/{}", n.id);
+                let legacy = format!(".nodo/sources/{}", n.id);
+                if !Path::new(&r.workspace).join(&current).exists()
+                    && Path::new(&r.workspace).join(&legacy).exists() {
+                    legacy
+                } else {
+                    current
+                }
             }
         })
 }
@@ -275,7 +282,7 @@ mod tests {
         );
         assert!(
             !Path::new(&r.workspace)
-                .join(".nodo/sources/additional")
+                .join(".rightcommit/sources/additional")
                 .exists()
         );
         crate::subworkflows::workspace(&app, 1, &r).unwrap();
@@ -322,7 +329,7 @@ mod tests {
         let extra = PathBuf::from(source_path(&first, 1, &n));
         assert!(extra.join("Cargo.toml").exists());
         assert_ne!(source_path(&first, 1, &n), source_path(&second, 1, &n));
-        assert!(!original.join(".nodo/sources").exists());
+        assert!(!original.join(".rightcommit/sources").exists());
         crate::deletion::perform(&app, 1, &w.id, &[first.id, second.id]).unwrap();
         assert!(!extra.exists());
         assert_eq!(
@@ -341,4 +348,12 @@ mod tests {
         };
         assert!(!direct(&n));
     }
+}
+
+/// Both namespaces remain readable for saved runs; new files use .rightcommit.
+pub(crate) fn internal_dir(name: &str) -> bool {
+    matches!(name, ".rightcommit" | ".nodo")
+}
+pub(crate) fn report_path(path: &str) -> bool {
+    path.starts_with(".rightcommit/reports/") || path.starts_with(".nodo/reports/")
 }

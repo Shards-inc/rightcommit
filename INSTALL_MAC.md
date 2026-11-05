@@ -87,6 +87,30 @@ rightcommit
 **Keep this Terminal window open** while you use the app.
 Now go to **[Open the app](#open-the-app)**.
 
+### Optional configuration with .env
+
+Create `.env` inside the folder from which you start the app. For the Homebrew
+steps above, this is `~/rightcommit/.env`, alongside `data` and `sources`, not
+inside Homebrew's installation directory. The Homebrew launcher preserves your
+current working directory.
+
+For example:
+
+```dotenv
+# 1 allows new accounts to register; 0 keeps public registration closed.
+NODO_ALLOW_REGISTRATION=0
+# Native listen address and port (RIGHTCOMMIT_PORT is only for Docker Compose).
+NODO_LISTEN=127.0.0.1:8080
+```
+
+The repository's `.env.example` lists the available settings, grouped by purpose.
+Protect your file with `chmod 600 ~/rightcommit/.env`. Stop the app and start it
+again from `~/rightcommit` after changes. Settings already exported in Terminal
+take precedence over `.env`; empty optional entries do not override native defaults.
+The app reads only the `.env` in its working directory and does not search parent
+folders. If you configure your own background service, set that service's working
+directory to `~/rightcommit` too.
+
 ### Everyday use
 
 - **Stop the app:** in the Terminal window press **Ctrl + C**.

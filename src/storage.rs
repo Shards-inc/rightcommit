@@ -115,7 +115,7 @@ fn reports(
     let mut artifacts = app.store.artifacts(uid, id)?;
     artifacts.sort_by_key(|a| a.version);
     for a in artifacts {
-        if a.path.starts_with(".nodo/reports/") && relative(&a.path).is_ok() {
+        if crate::source_access::report_path(&a.path) && relative(&a.path).is_ok() {
             latest.insert(a.path, a.content);
         }
     }
@@ -124,7 +124,12 @@ fn reports(
 fn report_view(app: &App, uid: i64, path: &str) -> anyhow::Result<Option<Value>> {
     relative(path)?;
     let (id, rest) = path.split_once('/').unwrap_or((path, ""));
-    if rest != ".nodo" && rest != ".nodo/reports" && !rest.starts_with(".nodo/reports/") {
+    let dir = rest.split('/').next().unwrap_or("");
+    if !crate::source_access::internal_dir(dir) {
+        return Ok(None);
+    }
+    let report_dir = format!("{dir}/reports");
+    if rest != dir && rest != report_dir && !crate::source_access::report_path(rest) {
         return Ok(None);
     }
     let reports = reports(app, uid, id)?;
@@ -135,12 +140,12 @@ fn report_view(app: &App, uid: i64, path: &str) -> anyhow::Result<Option<Value>>
         let reason=if preview.is_some(){None}else{Some(if content.len() as u64>limit {"size"}else{"format"})};
         return Ok(Some(json!({"path":path,"file":true,"preview":preview,"html":preview.map(|s|crate::api::render_markdown(s)),"size":content.len(),"preview_reason":reason,"preview_limit_mb":settings.file_preview_limit_mb})));
     }
-    if rest == ".nodo/reports" {
+    if rest == report_dir {
         return Ok(Some(
-            json!({"path":path,"entries":reports.keys().map(|p|json!({"name":p.trim_start_matches(".nodo/reports/"),"directory":false,"size":reports[p].len()})).collect::<Vec<_>>()}),
+            json!({"path":path,"entries":reports.keys().filter(|p|p.starts_with(&format!("{report_dir}/"))).map(|p|json!({"name":p.trim_start_matches(&format!("{report_dir}/")),"directory":false,"size":reports[p].len()})).collect::<Vec<_>>()}),
         ));
     }
-    if rest == ".nodo" && workspace_path(app, uid, path).is_err() {
+    if rest == dir && workspace_path(app, uid, path).is_err() {
         return Ok(Some(
             json!({"path":path,"entries":[{"name":"reports","directory":true,"size":0}]}),
         ));
@@ -186,18 +191,21 @@ pub async fn list(
     }
     if q.root == "workspaces" {
         let (id, rest) = q.path.split_once('/').unwrap_or((&q.path, ""));
-        let name = if rest.is_empty() {
-            Some(".nodo")
-        } else if rest == ".nodo" {
-            Some("reports")
-        } else {
-            None
-        };
-        if let Some(name) = name
-            && !reports(&app, u.id, id)?.is_empty()
-            && !entries.iter().any(|e| e["name"] == name)
-        {
-            entries.push(json!({"name":name,"directory":true,"size":0}));
+        let report_files = reports(&app, u.id, id)?;
+        for dir in [".rightcommit", ".nodo"] {
+            let name = if rest.is_empty() {
+                Some(dir)
+            } else if rest == dir {
+                Some("reports")
+            } else {
+                None
+            };
+            if let Some(name) = name
+                && report_files.keys().any(|p|p.starts_with(&format!("{dir}/reports/")))
+                && !entries.iter().any(|e| e["name"] == name)
+            {
+                entries.push(json!({"name":name,"directory":true,"size":0}));
+            }
         }
     }
     if entries.len() > 10000 {
@@ -291,7 +299,7 @@ pub async fn download(
         let (id, rest) = q.path.split_once('/').unwrap_or((&q.path, ""));
         report_files = reports(&app, u.id, id)?;
         selected = rest.to_string();
-        if rest == ".nodo" || rest == ".nodo/reports" || report_files.contains_key(rest) {
+        if crate::source_access::internal_dir(rest) || [".nodo/reports", ".rightcommit/reports"].contains(&rest) || report_files.contains_key(rest) {
             workspace_path(&app, u.id, id)?.join(rest)
         } else {
             workspace_path(&app, u.id, &q.path)?
@@ -363,7 +371,7 @@ impl From<std::io::Error> for crate::auth::ApiError {
 
 pub(crate) fn rag_source(app: &App, uid: i64, root: &str, path: &str) -> anyhow::Result<PathBuf> {
     anyhow::ensure!(
-        !path.split('/').any(|s| s == ".nodo"),
+        !path.split('/').any(crate::source_access::internal_dir),
         "I report virtuali non sono sorgenti indicizzabili"
     );
     storage_path(
@@ -402,6 +410,27 @@ mod tests {
         assert!(workspace_path(&app, 1, "").is_err());
         std::os::unix::fs::symlink("/etc", Path::new(&run.workspace).join("escape")).unwrap();
         assert!(workspace_path(&app, 1, &format!("{}/escape/passwd", run.id)).is_err());
+    }
+    #[tokio::test]
+    async fn reports_support_current_and_legacy_namespaces() {
+        let d = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(d.path());
+        let run = crate::engine::create(&app, 1, crate::presets::all().remove(0), "reports".into(), None).await.unwrap();
+        for dir in [".rightcommit", ".nodo"] {
+            let path = format!("{dir}/reports/task.md");
+            let artifact: crate::model::Artifact = serde_json::from_value(json!({
+                "id":crate::model::id(), "run":run.id, "node":"task", "path":path,
+                "version":1, "hash":"test", "content":dir, "session":"", "turn":0, "created":0
+            })).unwrap();
+            app.store.add_artifact(1, &artifact).unwrap();
+            let view = report_view(&app, 1, &format!("{}/{path}",run.id)).unwrap().unwrap();
+            assert_eq!(view["preview"], dir);
+            let listing = report_view(&app, 1, &format!("{}/{dir}/reports",run.id)).unwrap().unwrap();
+            assert_eq!(listing["entries"].as_array().unwrap().len(), 1);
+            assert_eq!(listing["entries"][0]["name"], "task.md");
+            assert!(report_view(&app, 2, &format!("{}/{path}",run.id)).is_err());
+            assert!(rag_source(&app, 1, "workspaces", &format!("{}/{path}",run.id)).is_err());
+        }
     }
     #[test]
     fn rejects_escape_and_symlinks() {

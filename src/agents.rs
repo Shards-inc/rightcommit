@@ -1469,6 +1469,7 @@ pub(crate) fn workspace_fingerprint(root: &Path) -> Result<String> {
                 "target",
                 "node_modules",
                 ".nodo",
+                ".rightcommit",
                 "__pycache__",
                 ".pytest_cache",
                 ".mypy_cache",

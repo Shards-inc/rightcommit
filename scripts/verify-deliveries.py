@@ -51,7 +51,7 @@ for index, item in enumerate(live['runs']):
     for name, meta in latest.items():
         path = PurePosixPath(name)
         assert not path.is_absolute() and '..' not in path.parts
-        if not (name.startswith(('src/', 'specs/', '.specify/memory/', '.nodo/reports/')) or name in ['Cargo.toml', 'Cargo.lock']): continue
+        if not (name.startswith(('src/', 'specs/', '.specify/memory/', '.rightcommit/reports/', '.nodo/reports/')) or name in ['Cargo.toml', 'Cargo.lock']): continue
         a = c.call('/artifacts/' + meta['id'])['artifact']
         assert hashlib.sha256(a['content'].encode()).hexdigest() == a['hash']
         output = destination / name; output.parent.mkdir(parents=True, exist_ok=True); output.write_text(a['content'])

@@ -6,12 +6,16 @@ services:
     image: rightcommit:itsm-test
     build: .
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${RIGHTCOMMIT_PORT:-8080}:8080"
     volumes:
       - test-data:/data
       - test-sources:/sources
     environment:
-      NODO_SECURE_COOKIE: "0"
+      # App options read from .env; defaults preserve local HTTP and closed signup.
+      NODO_ALLOW_REGISTRATION: ${NODO_ALLOW_REGISTRATION:-0}
+      NODO_SECURE_COOKIE: ${NODO_SECURE_COOKIE:-0}
+      NODO_CONNECTOR_HOSTS: ${NODO_CONNECTOR_HOSTS:-}
+      RUST_LOG: ${RUST_LOG:-rightcommit=info}
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}

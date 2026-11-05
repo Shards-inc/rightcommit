@@ -569,7 +569,7 @@ pub async fn create_reserved(
         let dest = if i == 0 {
             workspace.clone()
         } else {
-            run_folder.join(".nodo/sources").join(&n.id)
+            run_folder.join(".rightcommit/sources").join(&n.id)
         };
         if i > 0 && source_context.contains_key("direct-primary") {
             source_context.insert(
