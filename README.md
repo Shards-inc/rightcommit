@@ -39,7 +39,7 @@
 
 ---
 
-![rightcommit Agent Studio showing a ServiceNow triage workflow](https://raw.githubusercontent.com/rightcommit/rightcommit/main/.github/assets/rightcommit-demo-page-3.png)
+![rightcommit Agent Studio showing a workflow on the visual canvas](https://raw.githubusercontent.com/rightcommit/rightcommit/main/.github/assets/rightcommit-demo-page-3.png)
 
 ## Why rightcommit
 
@@ -70,7 +70,7 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
   of the ready-made workflows, such as Spec Kit specification → plan → tasks → implementation,
   or build your own.
 - **Your agents, coordinated.** Claude Code, Codex and Pi in one workspace. Each step uses
-  the agent and model you picked, with no silent fallback. Model-Agnostic by Design.
+  the agent and model you picked, with no silent fallback. Model-agnostic by design.
 - **You stay in control.** Run interactively, assisted or unattended. Pause for human
   decisions and resume where you left off.
 - **Not only code.** The same blocks can run research, document analysis or reporting workflows.
@@ -186,7 +186,7 @@ You can use, modify, self-host and distribute the code, including for commercial
 under the terms of the license. See [LICENSE](LICENSE) for the full terms.
 
 The permissions above concern rightcommit itself. Any third-party product or service used
-with it remains subject to its own terms and the [supported deployment scope](#intended-use-and-third-party-provider-obligations).
+with it remains subject to its own terms and the [supported deployment scope](INTENDED_USE.md).
 
 Third-party notices for bundled icons and Spec Kit files are in [`licenses/`](licenses).
 
