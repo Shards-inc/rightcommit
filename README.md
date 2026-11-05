@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-6254e8" alt="License: FSL-1.1-ALv2"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6254e8" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/built%20with-Rust-b7410e" alt="Built with Rust">
   <img src="https://img.shields.io/badge/runs%20in-one%20container-2496ed" alt="Runs in one container">
 </p>
@@ -56,9 +56,8 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
 
 ## What you get
 
-- **Agentic Workflow Orchestration.** Design, execute, and orchestrate intelligent workflows combining AI agents, enterprise
-  data, and external tools. Expose workflows as A2A-compatible agents, enabling seamless
-  interoperability across agentic ecosystems.
+- **Agentic workflow orchestration.** Design and run workflows that combine AI agents
+  and tools. Workflows can be exposed as A2A-compatible agents.
 - **Verified outcomes.** Tasks must be ticked, tests run on the server and a second agent
   (even a different one) reviews the work. If anything changes after the tests, tests and
   review run again.
@@ -74,8 +73,7 @@ Learn more at **[rightcommit.com](https://rightcommit.com)**.
   the agent and model you picked, with no silent fallback. Model-Agnostic by Design.
 - **You stay in control.** Run interactively, assisted or unattended. Pause for human
   decisions and resume where you left off.
-- **Beyond Traditional Automation.** Automate business processes with orchestrated AI agents.
-  Run workflows on a schedule, attended or unattended, with human oversight where needed.
+- **Not only code.** The same blocks can run research, document analysis or reporting workflows.
 
 ## Connections
 
@@ -95,10 +93,7 @@ user accounts. Read [Provider terms and permitted use](PROVIDER_TERMS.md) and
 and do not imply affiliation or endorsement.
 
 - **Developers** running agents on their own laptop, with their own keys.
-- **Consultants** applying their methods within a client's authorized deployment, with
-  credentials and provider billing controlled by that client.
-- **Teams** running it on their own servers, with authorized organizational credentials,
-  separate user settings and workspaces.
+- **Small teams** who prefer to self-host, with separate users, keys and workspaces.
 
 ## Quickstart
 
@@ -185,19 +180,13 @@ provider authorization and credential scope still apply.
 
 Copyright (c) 2026 Lorenzo Toscano
 
-rightcommit is [Fair Source](https://fair.io), released under the
-**[Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2)](LICENSE)**.
+rightcommit is open source, released under the **[Apache License, Version 2.0](LICENSE)**.
 
-- You can read, use, modify and share the code, and self-host it for free.
-- Internal use, non-commercial education and research, and professional services for your
-  clients are explicitly permitted.
-- Offering a competing commercial product or service is not permitted.
-- Each version becomes available under the **Apache License 2.0** two years after its release.
+You can use, modify, self-host and distribute the code, including for commercial purposes,
+under the terms of the license. See [LICENSE](LICENSE) for the full terms.
 
 The permissions above concern rightcommit itself. Any third-party product or service used
 with it remains subject to its own terms and the [supported deployment scope](#intended-use-and-third-party-provider-obligations).
-
-See [fsl.software](https://fsl.software) for background on the license.
 
 Third-party notices for bundled icons and Spec Kit files are in [`licenses/`](licenses).
 
@@ -212,6 +201,8 @@ Found a bug or have an idea? [Open an issue](https://github.com/rightcommit/righ
 Questions and feedback: [hello@rightcommit.com](mailto:hello@rightcommit.com).
 
 ---
+
+rightcommit is an independent side project created and maintained by Lorenzo Toscano in his personal capacity. It is developed in his own time, with his own resources, and is not affiliated with, endorsed by, or sponsored by his employer, any of its clients, or any other organization. Views and choices expressed in this project are his own.
 
 <sub>Claude Code, Codex, Pi, GitHub, Azure DevOps, ServiceNow, Jira, Confluence, Bitbucket,
 Spec Kit, Rust, Docker and other names and marks belong to their owners. rightcommit is not
