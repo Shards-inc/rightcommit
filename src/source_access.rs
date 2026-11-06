@@ -86,9 +86,12 @@ pub fn available(app: &App, requested: &[PathBuf], excluded: &[String]) -> Resul
     }
     let db = app.store.db.lock().unwrap();
     let mut statement = db.prepare("SELECT json FROM runs")?;
-    for row in statement.query_map([], |row| row.get::<_, String>(0))? {
-        let other: Run = serde_json::from_str(&row?)?;
-        if excluded.contains(&other.id)
+    let runs: Vec<Run> = statement.query_map([], |row| row.get::<_, String>(0))?
+        .map(|row| Ok(serde_json::from_str(&row?)?)).collect::<Result<_>>()?;
+    let superseded: std::collections::HashSet<_> = runs.iter()
+        .filter_map(|r|r.context.get("workspace-predecessor").cloned()).collect();
+    for other in runs {
+        if superseded.contains(&other.id) || excluded.contains(&other.id)
             || ![
                 "starting",
                 "running",

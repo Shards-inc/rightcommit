@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use std::{
     collections::{BTreeMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 pub fn edge_allowed(a: &Node, b: &Node, kind: &str, outcome: &str) -> bool {
@@ -160,6 +160,7 @@ pub fn validate_draft(w: &Workflow) -> Result<()> {
                 && n.height.is_finite(),
             "Configurazione nodo non valida"
         );
+        ensure!(!n.skip || n.kind == "Task", "Salta task è disponibile solo sui nodi Task");
         if n.kind=="Agent" {
             ensure!(n.pi_provider.is_empty() || crate::pi_providers::known(&n.pi_provider),"Provider Pi non supportato: {}",n.pi_provider);
             ensure!(n.pi_base_url.len()<=2048,"URL del provider locale non valido");
@@ -282,7 +283,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
                 "Seleziona un workflow diverso dal chiamante"
             );
         }
-        if n.kind == "Task" {
+        if n.kind == "Task" && !n.skip {
             ensure!(!n.prompt.trim().is_empty(), "Task senza prompt");
         }
         if n.kind == "Gate" {
@@ -310,6 +311,7 @@ pub fn validate(w: &Workflow) -> Result<()> {
                 w.node(&n.agent)?.kind == "Task" && w.node(&n.target)?.kind == "Agent",
                 "Memory richiede Task sorgente e Agent destinatario"
             );
+            ensure!(!w.node(&n.agent)?.skip, "Memory richiede l’output del task {}: disattiva Salta task o modifica il collegamento", n.agent);
         }
     }
     ensure!(
@@ -518,11 +520,14 @@ pub async fn create_reserved(
 ) -> Result<Run> {
     crate::subworkflows::validate_tree(app, uid, &w)?;
     let settings = app.store.settings(uid)?;
+    let active_agents: HashSet<_> = w.nodes.iter().filter(|n| {
+        n.kind == "Task" && !n.skip || n.kind == "Gate" || n.kind == "Review" && n.mode != "human"
+    }).map(|n| n.agent.clone()).collect();
     for n in w.nodes.iter_mut().filter(|n| n.kind == "Agent") {
         if n.runtime.is_empty() {
             n.runtime = settings.default_runtime.clone();
         }
-        if n.runtime=="pi" {
+        if n.runtime=="pi" && active_agents.contains(&n.id) {
             let config=settings.agents.get("pi").cloned().unwrap_or_default();
             if config.multi_provider {
                 let selected=crate::pi_providers::preflight(app,uid,&settings,&n.pi_provider,&n.model,&n.pi_base_url)
@@ -549,7 +554,8 @@ pub async fn create_reserved(
     for (i, n) in sources.iter().enumerate() {
         if crate::source_access::direct(n) && !(i == 0 && base_run.is_some()) {
             let path = crate::storage::source_folder(app, "sources", &n.location)?;
-            crate::source_access::validate_tree(&path)?;
+            let checked = path.clone();
+            crate::artifacts::blocking(move || crate::source_access::validate_tree(&checked)).await?;
             source_context.insert(
                 format!("direct-source:{}", n.id),
                 path.to_string_lossy().into_owned(),
@@ -563,7 +569,7 @@ pub async fn create_reserved(
     crate::source_access::available(app, &crate::source_access::paths(&source_context), &[])?;
     for (i, n) in sources.iter().enumerate() {
         if let Some(path) = source_context.get(&format!("direct-source:{}", n.id)) {
-            agents::own_tree(app, uid, Path::new(path))?;
+            agents::own_tree_async(app, uid, Path::new(path)).await?;
             continue;
         }
         let dest = if i == 0 {
@@ -587,13 +593,13 @@ pub async fn create_reserved(
             );
             let prior:Vec<_>=app.store.decisions(uid,&old.id)?.into_iter().filter(|d|d.decision=="approve").map(|d|serde_json::json!({"id":d.id,"node":d.node,"user":d.user,"created":d.created})).collect();
             source_context.insert("source-run".into(),serde_json::to_string(&serde_json::json!({"run_id":old.id,"status":old.status,"historical_approvals":prior,"local_delivery":old.outputs.get("commit"),"note":"Historical provenance, not an approval of the new run. Revalidate its changes."}))?);
-            agents::copy_tree(Path::new(&old.workspace), &dest)?;
+            agents::copy_tree_async(Path::new(&old.workspace), &dest).await?;
         } else {
             match n.source_type.as_str() {
                 "example" | "" => {
-                    agents::copy_tree(&app.assets.join("examples/helpdesk"), &dest)?;
+                    agents::copy_tree_async(&app.assets.join("examples/helpdesk"), &dest).await?;
                     if n.location == "baseline" {
-                        agents::copy_tree(&app.assets.join("examples/living-spec"), &dest)?;
+                        agents::copy_tree_async(&app.assets.join("examples/living-spec"), &dest).await?;
                     }
                 }
                 "folder" | "examples" => {
@@ -604,9 +610,10 @@ pub async fn create_reserved(
                     };
                     let src = crate::storage::source_folder(app, namespace, &n.location)?;
                     if namespace == "sources" {
-                        agents::copy_source_tree(&src, &dest, settings.source_copy_limit_bytes()?)?;
+                        let (src, dest, limit) = (src.clone(), dest.clone(), settings.source_copy_limit_bytes()?);
+                        crate::artifacts::blocking(move || agents::copy_source_tree(&src, &dest, limit)).await?;
                     } else {
-                        agents::copy_tree(&src, &dest)?;
+                        agents::copy_tree_async(&src, &dest).await?;
                     }
                 }
                 "git" => {
@@ -618,7 +625,7 @@ pub async fn create_reserved(
                         "Repo: usa un URL HTTPS senza credenziali"
                     );
                     std::fs::create_dir_all(&dest)?;
-                    agents::own_tree(app, uid, &dest)?;
+                    agents::own_tree_async(app, uid, &dest).await?;
                     agents::tool(
                         app,
                         uid,
@@ -633,9 +640,9 @@ pub async fn create_reserved(
             }
         }
     }
-    agents::own_tree(app, uid, &workspace)?;
+    agents::own_tree_async(app, uid, &workspace).await?;
     if run_folder.exists() {
-        agents::own_tree(app, uid, &run_folder)?;
+        agents::own_tree_async(app, uid, &run_folder).await?;
     }
     let direct_primary = source_context.contains_key("direct-primary");
     if !direct_primary && !workspace.join(".git").exists() {
@@ -719,7 +726,7 @@ pub async fn create_reserved(
         error: None,
         input,
     };
-    crate::artifacts::baseline(app, uid, &r)?;
+    crate::artifacts::baseline_async(app, uid, &r).await?;
     app.store.save_run(uid, &r)?;
     emit(
         app,
@@ -742,13 +749,6 @@ pub fn launch(app: App, uid: i64, rid: String) -> Result<()> {
     {
         let mut busy = app.busy.lock().unwrap();
         crate::subworkflows::can_launch_reserved(&app, uid, &queued, &busy)?;
-        let lineage = crate::subworkflows::ancestors(&app, uid, &queued)?;
-        let root = lineage.last().unwrap_or(&queued);
-        for path in crate::source_access::paths(&root.context) {
-            crate::source_access::validate_tree(&path)?;
-            agents::own_tree(&app, uid, &path)?;
-        }
-        crate::artifacts::baseline(&app, uid, &queued)?;
         ensure!(busy.insert(rid.clone()), "Esecuzione già attiva");
     }
     queued.status = "starting".into();
@@ -764,21 +764,36 @@ pub fn launch(app: App, uid: i64, rid: String) -> Result<()> {
         .unwrap()
         .insert(rid.clone(), RunControl { stop, done });
     tokio::spawn(async move {
-        // Dropping the drive future drops all active CLI process-group guards,
-        // including parallel branches, and releases the scheduler permit.
-        let result = tokio::select! {
-            biased;
-            _ = stopped.changed() => None,
-            result = async {
-                let _permit = app.slots.acquire(&app.store, uid).await;
-                crate::auth::ensure_active(&app, uid)?;
-                drive_supervised(&app, uid, &rid).await
-            } => Some(result),
+        // Preparation is joined before honoring Stop: filesystem work must not
+        // outlive the worker's done notification and race workspace deletion.
+        let (scan_app, scan_run) = (app.clone(), queued.clone());
+        let prepared = crate::artifacts::blocking(move || {
+            let lineage = crate::subworkflows::ancestors(&scan_app, uid, &scan_run)?;
+            let root = lineage.last().unwrap_or(&scan_run);
+            for path in crate::source_access::paths(&root.context) {
+                crate::source_access::validate_tree(&path)?;
+                agents::own_tree(&scan_app, uid, &path)?;
+            }
+            crate::artifacts::baseline(&scan_app, uid, &scan_run)
+        }).await;
+        // Dropping drive drops active CLI process-group guards. A final snapshot
+        // joins any in-flight snapshot via the per-run inventory lock.
+        let result = match prepared {
+            Err(error) => Some(Err(error)),
+            Ok(()) => tokio::select! {
+                biased;
+                _ = stopped.changed() => None,
+                result = async {
+                    let _permit = app.slots.acquire(&app.store, uid).await;
+                    crate::auth::ensure_active(&app, uid)?;
+                    drive_supervised(&app, uid, &rid).await
+                } => Some(result),
+            },
         };
         let cancelled = result.is_none();
         if (cancelled || result.as_ref().is_some_and(|r| r.is_err()))
             && let Ok(run) = app.store.run(uid, &rid)
-            && let Err(error) = crate::artifacts::snapshot(&app, uid, &run, &run.current, "", "")
+            && let Err(error) = crate::artifacts::snapshot_async(&app, uid, &run, &run.current, "", "").await
         {
             emit(
                 &app,
@@ -799,6 +814,10 @@ pub fn launch(app: App, uid: i64, rid: String) -> Result<()> {
             emit(&app, uid, &rid, "error", &r.current, &e.to_string());
         }
         app.busy.lock().unwrap().remove(&rid);
+        // A waiting parent continues to watch the workspace shared by its children.
+        if !app.store.run(uid, &rid).is_ok_and(|r| r.status == "waiting_child") {
+            crate::artifacts::stop_monitor(&app, uid, &rid);
+        }
         app.workers.lock().unwrap().remove(&rid);
         let _ = finished.send(true);
         if cancelled {
@@ -987,6 +1006,11 @@ pub(crate) fn tests_current(r: &Run) -> Result<bool> {
     Ok(proofs.iter().any(|proof| **proof == current))
 }
 
+async fn tests_current_async(run: &Run) -> Result<bool> {
+    let run = run.clone();
+    crate::artifacts::blocking(move || tests_current(&run)).await
+}
+
 async fn drive_supervised(app: &App, uid: i64, rid: &str) -> Result<()> {
     loop {
         if app.store.run(uid, rid)?.pending.is_some()
@@ -999,6 +1023,14 @@ async fn drive_supervised(app: &App, uid: i64, rid: &str) -> Result<()> {
             return Ok(());
         }
     }
+}
+
+// A bypass is an explicit execution state, distinct from an unvisited branch.
+// Do not synthesize an agent result or carry a stale result across a retry.
+fn bypass_task(r: &mut Run, n: &Node) {
+    r.states.insert(n.id.clone(), "bypassed".into());
+    r.outputs.remove(&n.id);
+    if r.last_task.as_ref() == Some(&n.id) { r.last_task = None; }
 }
 
 async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
@@ -1044,6 +1076,11 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 .iter()
                 .find(|e| e.to == n.id && r.last_node.as_ref().is_some_and(|p| p == &e.from))
                 .cloned();
+        }
+        if n.kind == "Task" && n.skip {
+            bypass_task(&mut r, &n);
+            route(app, uid, &mut r, "")?;
+            continue;
         }
         if n.kind == "Fork" {
             execute_parallel(app, uid, &mut r, &n).await?;
@@ -1140,7 +1177,7 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     },
                 )
                 .await?;
-                agents::snapshot(app, uid, &r, &n.id, &n.agent, &out.report())?;
+                crate::artifacts::snapshot_async(app, uid, &r, &n.id, &n.agent, &out.report()).await?;
                 r.last_task = Some(n.id.clone());
                 out
             }
@@ -1176,14 +1213,14 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                             },
                         )
                         .await?;
-                        agents::snapshot(
+                        crate::artifacts::snapshot_async(
                             app,
                             uid,
                             &r,
                             &n.id,
                             &format!("review:{}", n.id),
                             &out.report(),
-                        )?;
+                        ).await?;
                         if out.status == "needs_input" {
                             r.outputs.insert(n.id.clone(), out.clone());
                             let last = r.last_task.clone();
@@ -1233,19 +1270,19 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                                 ..Default::default()
                             },
                         );
-                        agents::snapshot(app, uid, &r, &n.id, "", &summary)?;
+                        crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &summary).await?;
                         r.states.insert(n.id.clone(), "completed".into());
                         route(app, uid, &mut r, "rework")?;
                         continue;
                     }
                 }
-                if n.require_tests && !tests_current(&r)? {
+                if n.require_tests && !tests_current_async(&r).await? {
                     ensure!(
                         n.outcomes.iter().any(|o| o == "rework"),
                         "Quality gate: riesegui i test deterministici sul workspace corrente"
                     );
                     let summary="I test del server sono mancanti o non più validi per i file correnti. Conserva le correzioni e ripassa da implementazione, CI e review prima della consegna.".to_string();
-                    agents::snapshot(app, uid, &r, &n.id, "", &summary)?;
+                    crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &summary).await?;
                     r.outputs.insert(
                         n.id.clone(),
                         AgentResult {
@@ -1281,7 +1318,7 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 )
                 .await?;
                 if out.status == "completed" {
-                    if n.require_tests && out.decision == "pass" && !tests_current(&r)? {
+                    if n.require_tests && out.decision == "pass" && !tests_current_async(&r).await? {
                         ensure!(
                             n.outcomes.iter().any(|o| o == "rework"),
                             "Il gate ha cambiato i file dopo CI: nuova verifica richiesta"
@@ -1299,14 +1336,14 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     );
                     outcome = out.decision.clone();
                 }
-                agents::snapshot(
+                crate::artifacts::snapshot_async(
                     app,
                     uid,
                     &r,
                     &n.id,
                     &format!("gate:{}", n.id),
                     &out.report(),
-                )?;
+                ).await?;
                 out
             }
             "Memory" => {
@@ -1317,7 +1354,7 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 let text = handoff_package(app, uid, &r, &n.agent, &n.target)?;
                 r.context
                     .insert(format!("handoff:{}", n.target), text.clone());
-                agents::snapshot(app, uid, &r, &n.id, "", &text)?;
+                crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &text).await?;
                 AgentResult {
                     status: "completed".into(),
                     summary: text,
@@ -1327,7 +1364,7 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
             "A2A" => {
                 let out = crate::a2a::execute(app, uid, &mut r, &n).await?;
                 if out.status == "completed" {
-                    agents::snapshot(app, uid, &r, &n.id, "", &out.report())?;
+                    crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &out.report()).await?;
                 }
                 out
             }
@@ -1338,12 +1375,11 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     && out.status == "completed"
                     && out.decision == "pass"
                 {
-                    r.context.insert(
-                        format!("test-proof:{}", n.id),
-                        agents::workspace_fingerprint(Path::new(&r.workspace))?,
-                    );
+                    let workspace = PathBuf::from(&r.workspace);
+                    let proof = crate::artifacts::blocking(move || agents::workspace_fingerprint(&workspace)).await?;
+                    r.context.insert(format!("test-proof:{}", n.id), proof);
                 }
-                agents::snapshot(app, uid, &r, &n.id, "", &out.report())?;
+                crate::artifacts::snapshot_async(app, uid, &r, &n.id, "", &out.report()).await?;
                 out
             }
             _ => bail!("Nodo non eseguibile: {}", n.kind),
@@ -1462,13 +1498,16 @@ async fn execute_parallel(app: &App, uid: i64, r: &mut Run, fork: &Node) -> Resu
             .filter_map(|branch| {
                 branch
                     .iter()
-                    .find(|n| r.states.get(&n.id).is_none_or(|s| s != "completed"))
+                    .find(|n| r.states.get(&n.id).is_none_or(|s| !["completed", "bypassed"].contains(&s.as_str())))
                     .cloned()
             })
             .collect();
         if ready.is_empty() {
             break;
         }
+        for n in ready.iter().filter(|n| n.skip) { bypass_task(r, n); }
+        let ready: Vec<_> = ready.into_iter().filter(|n| !n.skip).collect();
+        if ready.is_empty() { save(app, uid, r)?; continue; }
         for n in &ready {
             r.states.insert(n.id.clone(), "running".into());
             *r.attempts.entry(n.id.clone()).or_default() += 1;
@@ -1515,7 +1554,7 @@ async fn execute_parallel(app: &App, uid: i64, r: &mut Run, fork: &Node) -> Resu
             }
             match result {
                 Ok(out) => {
-                    if let Err(e) = agents::snapshot(app, uid, r, &n.id, &n.agent, &out.report()) {
+                    if let Err(e) = crate::artifacts::snapshot_async(app, uid, r, &n.id, &n.agent, &out.report()).await {
                         errors.push(format!("{}: {e}", n.title));
                     }
                     let state = if out.status == "completed" {
@@ -1554,6 +1593,7 @@ async fn execute_parallel(app: &App, uid: i64, r: &mut Run, fork: &Node) -> Resu
     let outputs: BTreeMap<_, _> = branches
         .iter()
         .flatten()
+        .filter(|n| !n.skip)
         .map(|n| {
             let output = r
                 .outputs
@@ -1834,6 +1874,67 @@ mod parallel_tests {
                 {"from":"b","to":"join","kind":"control"}]
         }))
         .unwrap()
+    }
+    #[tokio::test]
+    async fn skipped_parallel_tasks_make_no_calls_and_contribute_no_outputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let mut w = graph();
+        for n in w.nodes.iter_mut().filter(|n| n.kind == "Task") {
+            assert!(!n.skip); // Older workflows keep their existing behavior.
+            n.skip = true;
+            n.prompt.clear();
+            n.command = "missing-command-must-never-run".into();
+        }
+        let mut run = create(&app, 1, w, "skip".into(), None).await.unwrap();
+        run.outputs.insert("a".into(), completed("stale output"));
+        save(&app, 1, &mut run).unwrap();
+        drive(&app, 1, &run.id).await.unwrap();
+        let saved = app.store.run(1, &run.id).unwrap();
+        assert_eq!(saved.status, "completed");
+        for id in ["a", "b"] {
+            assert_eq!(saved.states[id], "bypassed");
+            assert!(!saved.outputs.contains_key(id));
+            assert!(!saved.attempts.contains_key(id));
+        }
+        assert!(saved.sessions.is_empty());
+        assert_eq!(saved.outputs["join"].summary, "{}");
+        assert!(app.store.artifacts(1, &run.id).unwrap().iter().all(|a| a.node != "a" && a.node != "b"));
+    }
+    #[tokio::test]
+    async fn skipped_serial_task_continues_without_a_result_or_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let mut w = graph();
+        w.entry = "a".into();
+        w.nodes.retain(|n| !["fork", "join", "b", "ab"].contains(&n.id.as_str()));
+        let task = w.nodes.iter_mut().find(|n| n.id == "a").unwrap();
+        task.prompt = "   ".into();
+        w.nodes.iter_mut().find(|n| n.id == "a").unwrap().skip = true;
+        w.nodes.push(serde_json::from_value(serde_json::json!({"id":"review","kind":"Review","mode":"human"})).unwrap());
+        w.edges.retain(|e| e.kind == "context" && e.from != "ab");
+        w.edges.push(Edge {from:"a".into(),to:"review".into(),kind:"control".into(),outcome:String::new()});
+        // A normal Task still needs a prompt; bypassed Tasks do not.
+        w.nodes.iter_mut().find(|n| n.id == "a").unwrap().skip = false;
+        assert!(validate(&w).unwrap_err().to_string().contains("Task senza prompt"));
+        w.nodes.iter_mut().find(|n| n.id == "a").unwrap().skip = true;
+        validate(&w).unwrap();
+        let mut dependent = w.clone();
+        dependent.nodes.push(serde_json::from_value(serde_json::json!({"id":"memory","kind":"Memory","agent":"a","target":"aa"})).unwrap());
+        dependent.edges.iter_mut().find(|e|e.from=="a" && e.kind=="control").unwrap().to = "memory".into();
+        dependent.edges.push(Edge {from:"memory".into(),to:"review".into(),kind:"control".into(),outcome:String::new()});
+        assert!(validate(&dependent).unwrap_err().to_string().contains("disattiva Salta task"));
+        let mut r = create(&app, 1, w, "skip".into(), None).await.unwrap();
+        r.outputs.insert("a".into(), completed("stale output"));
+        save(&app, 1, &mut r).unwrap();
+        drive(&app, 1, &r.id).await.unwrap();
+        let saved = app.store.run(1, &r.id).unwrap();
+        assert_eq!(saved.status, "waiting_review");
+        assert_eq!(saved.pending.unwrap().node, "review");
+        assert_eq!(saved.states["a"], "bypassed");
+        assert!(!saved.outputs.contains_key("a"));
+        assert!(!saved.attempts.contains_key("a"));
+        assert!(saved.sessions.is_empty());
     }
     fn coordinator_graph() -> Workflow {
         let mut w = graph();

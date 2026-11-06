@@ -69,6 +69,20 @@ pub fn ancestors(app: &App, uid: i64, r: &Run) -> Result<Vec<Run>> {
     }
     Ok(out)
 }
+/// Stable storage identity, independent of the run currently using the project.
+pub(crate) fn workspace_owner(run: &Run) -> Result<&str> {
+    let owner = run.context.get("workspace-owner").map(String::as_str).unwrap_or(&run.id);
+    ensure!(uuid::Uuid::parse_str(owner).is_ok(), "ID workspace non valido");
+    Ok(owner)
+}
+pub(crate) fn ensure_latest(app: &App, uid: i64, run: &Run) -> Result<()> {
+    let superseded: bool = app.store.db.lock().unwrap().query_row(
+        "SELECT EXISTS(SELECT 1 FROM runs WHERE user_id=? AND json_extract(json,'$.context.workspace-predecessor')=?)",
+        rusqlite::params![uid,run.id], |row|row.get(0))?;
+    ensure!(!superseded, "Continua dall’ultima esecuzione del progetto; questa run è nella cronologia");
+    Ok(())
+}
+
 pub fn workspace(app: &App, uid: i64, r: &Run) -> Result<PathBuf> {
     let lineage = ancestors(app, uid, r)?;
     let root = lineage.last().unwrap_or(r);
@@ -84,7 +98,7 @@ pub fn workspace(app: &App, uid: i64, r: &Run) -> Result<PathBuf> {
         );
         return Ok(PathBuf::from(path));
     }
-    let expected = app.data.join(format!("users/{uid}/workspaces/{}", root.id));
+    let expected = app.data.join(format!("users/{uid}/workspaces/{}", workspace_owner(root)?));
     ensure!(
         uuid::Uuid::parse_str(&root.id).is_ok()
             && !expected
@@ -120,6 +134,7 @@ pub fn can_launch_reserved(app: &App, uid: i64, r: &Run, busy: &HashSet<String>)
         child = p;
     }
     let root = lineage.last().unwrap_or(r);
+    ensure_latest(app, uid, root)?;
     crate::source_access::validate_bindings(app, root)?;
     let excluded: Vec<_> = lineage
         .iter()

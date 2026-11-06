@@ -5,19 +5,110 @@ use crate::{
     store::private,
 };
 use anyhow::{Context, Result, ensure};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fs::File,
     io::{Read, Write},
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const INLINE_PREVIEW_LIMIT: u64 = 1024 * 1024;
 
-fn digest(path: &Path) -> Result<String> {
-    let mut file = File::open(path)?;
+// Disposable, per-process cache: hashes in the database and immutable blobs remain
+// authoritative. A restart/eviction simply costs one full read, never loses history.
+#[derive(Default)]
+pub(crate) struct Tracker {
+    runs: Mutex<VecDeque<((i64, String), Arc<ScanState>)>>,
+}
+impl Tracker {
+    fn run(&self, uid: i64, run: &str) -> Arc<ScanState> {
+        let mut runs = self.runs.lock().unwrap();
+        let key = (uid, run.to_owned());
+        let entry = runs
+            .iter()
+            .position(|(k, _)| k == &key)
+            .and_then(|i| runs.remove(i))
+            .unwrap_or_else(|| (key, Arc::default()));
+        let cache = entry.1.clone();
+        runs.push_back(entry);
+        // Do not evict an in-flight scan: its lock also serializes snapshots.
+        while runs.len() > 16 {
+            let Some(i) = runs
+                .iter()
+                .position(|(_, cache)| Arc::strong_count(cache) == 1)
+            else {
+                break;
+            };
+            runs.remove(i);
+        }
+        cache
+    }
+}
+
+#[derive(Default)]
+struct ScanState {
+    inventory: Mutex<InventoryCache>,
+    gate: Arc<tokio::sync::Mutex<()>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct FileStamp {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+impl FileStamp {
+    fn of(meta: &std::fs::Metadata) -> Self {
+        Self {
+            device: meta.dev(),
+            inode: meta.ino(),
+            size: meta.len(),
+            modified: (meta.mtime(), meta.mtime_nsec()),
+            changed: (meta.ctime(), meta.ctime_nsec()),
+        }
+    }
+    fn settled(&self) -> bool {
+        // Racy timestamps on coarse-resolution filesystems must never authorize
+        // reuse. ctime also catches same-size writes with a restored mtime.
+        let cutoff = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(1) as i64;
+        self.modified.0 < cutoff && self.changed.0 < cutoff
+    }
+}
+#[derive(Default)]
+struct InventoryCache {
+    files: BTreeMap<String, (FileStamp, String)>,
+    hashed_files: usize,
+    monitor: Option<crate::file_watch::Monitor>,
+    pending: std::collections::BTreeSet<PathBuf>,
+}
+
+fn digest(path: &Path, expected: &FileStamp) -> Result<String> {
+    // Never turn a concurrently replaced symlink into cached source content.
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "Artefatto non regolare: {}",
+        path.display()
+    );
+    ensure!(
+        FileStamp::of(&file.metadata()?) == *expected,
+        "File cambiato durante la scansione: {}",
+        path.display()
+    );
     let mut hash = Sha256::new();
     let mut buffer = [0; 65536];
     loop {
@@ -27,7 +118,58 @@ fn digest(path: &Path) -> Result<String> {
         }
         hash.update(&buffer[..n]);
     }
+    ensure!(
+        FileStamp::of(&file.metadata()?) == *expected
+            && FileStamp::of(&std::fs::symlink_metadata(path)?) == *expected,
+        "File cambiato durante la scansione: {}",
+        path.display()
+    );
     Ok(hex::encode(hash.finalize()))
+}
+
+pub(crate) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .context("Operazione su file interrotta")?
+}
+
+pub async fn baseline_async(app: &App, uid: i64, run: &Run) -> Result<()> {
+    let state = app.artifact_tracker.run(uid, &run.id);
+    let guard = state.gate.clone().lock_owned().await;
+    let (app, run) = (app.clone(), run.clone());
+    blocking(move || {
+        let (_guard, _state) = (guard, state);
+        baseline(&app, uid, &run)
+    })
+    .await
+}
+
+pub async fn snapshot_async(
+    app: &App,
+    uid: i64,
+    run: &Run,
+    node: &str,
+    binding: &str,
+    summary: &str,
+) -> Result<()> {
+    let state = app.artifact_tracker.run(uid, &run.id);
+    // Acquire before dispatch, retain inside the job: cancelling the async caller
+    // cannot let a final/Stop snapshot overtake a still-queued disk operation.
+    let guard = state.gate.clone().lock_owned().await;
+    let (app, run, node, binding, summary) = (
+        app.clone(),
+        run.clone(),
+        node.to_owned(),
+        binding.to_owned(),
+        summary.to_owned(),
+    );
+    blocking(move || {
+        let (_guard, _state) = (guard, state);
+        snapshot(&app, uid, &run, &node, &binding, &summary)
+    })
+    .await
 }
 
 fn working_roots(app: &App, uid: i64, run: &Run) -> Result<Vec<PathBuf>> {
@@ -35,7 +177,7 @@ fn working_roots(app: &App, uid: i64, run: &Run) -> Result<Vec<PathBuf>> {
     let root = lineage.last().unwrap_or(run);
     let mut roots = vec![
         PathBuf::from(&run.workspace),
-        app.data.join(format!("users/{uid}/workspaces/{}", root.id)),
+        app.data.join(format!("users/{uid}/workspaces/{}", crate::subworkflows::workspace_owner(root)?)),
     ];
     for (index, node) in root
         .workflow
@@ -80,13 +222,119 @@ fn working_roots(app: &App, uid: i64, run: &Run) -> Result<Vec<PathBuf>> {
             canonical.push(path);
         }
     }
+    // A primary workspace often contains the secondary Source roots. Walking it
+    // once is sufficient; otherwise every nested directory is enumerated twice.
+    let roots = canonical.clone();
+    canonical.retain(|path| {
+        !roots
+            .iter()
+            .any(|parent| parent != path && path.starts_with(parent))
+    });
     Ok(canonical)
 }
 
 fn inventory(app: &App, uid: i64, run: &Run) -> Result<BTreeMap<String, String>> {
-    fn walk(path: &Path, files: &mut BTreeMap<String, String>) -> Result<()> {
+    let cache = app.artifact_tracker.run(uid, &run.id);
+    inventory_cached(app, uid, run, &mut cache.inventory.lock().unwrap())
+}
+
+fn inventory_cached(
+    app: &App,
+    uid: i64,
+    run: &Run,
+    cache: &mut InventoryCache,
+) -> Result<BTreeMap<String, String>> {
+    fn walk(
+        path: &Path,
+        files: &mut BTreeMap<String, String>,
+        next: &mut InventoryCache,
+        old: &InventoryCache,
+    ) -> Result<()> {
         let meta = match std::fs::symlink_metadata(path) {
             Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        if meta.is_symlink() {
+            return Ok(());
+        }
+        if meta.is_dir() {
+            if path.file_name().is_some_and(|n| n == ".git") {
+                return Ok(());
+            }
+            for entry in std::fs::read_dir(path)? {
+                walk(&entry?.path(), files, next, old)?;
+            }
+        } else if meta.is_file() {
+            let key = path.to_string_lossy().into_owned();
+            let stamp = FileStamp::of(&meta);
+            let hash = if let Some((_, hash)) = old.files.get(&key).filter(|(s, _)| s == &stamp) {
+                hash.clone()
+            } else {
+                next.hashed_files += 1;
+                digest(path, &stamp)
+                    .with_context(|| format!("Lettura artefatto {}", path.display()))?
+            };
+            if stamp.settled() {
+                next.files.insert(key.clone(), (stamp, hash.clone()));
+            }
+            files.insert(key, hash);
+        }
+        Ok(())
+    }
+    let started = std::time::Instant::now();
+    let roots = working_roots(app, uid, run)?;
+    // Start before the initial scan. Root changes and restarts rebuild the watch.
+    if run.parent.is_none() && !cache.monitor.as_ref().is_some_and(|m| m.matches(&roots)) {
+        cache.monitor = match crate::file_watch::Monitor::start(roots.clone()) {
+            Ok(monitor) => Some(monitor),
+            Err(error) => {
+                tracing::warn!(run=%run.id, %error, "Notifiche non disponibili; riconciliazione metadati attiva");
+                None
+            }
+        };
+    }
+    if let Some(monitor) = &cache.monitor {
+        let changes = monitor.take();
+        if changes.uncertain {
+            cache.files.clear();
+        } else {
+            cache
+                .files
+                .retain(|path, _| !changes.paths.contains(Path::new(path)));
+        }
+    }
+    let mut files = BTreeMap::new();
+    let mut next = InventoryCache::default();
+    for root in roots {
+        walk(&root, &mut files, &mut next, cache)?;
+    }
+    next.monitor = cache.monitor.take();
+    tracing::debug!(run=%run.id, files=files.len(), hashed=next.hashed_files,
+        elapsed_ms=started.elapsed().as_millis(), "Inventario artefatti");
+    *cache = next; // Deleted paths are not retained; failed scans never publish a partial cache.
+    Ok(files)
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum Baseline {
+    Metadata {
+        version: u8,
+        metadata: BTreeMap<String, FileStamp>,
+    },
+    Legacy(BTreeMap<String, String>),
+}
+
+fn metadata_inventory(
+    app: &App,
+    uid: i64,
+    run: &Run,
+    cache: &mut InventoryCache,
+) -> Result<BTreeMap<String, FileStamp>> {
+    fn walk(path: &Path, files: &mut BTreeMap<String, FileStamp>) -> Result<()> {
+        let meta = match std::fs::symlink_metadata(path) {
+            Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e.into()),
         };
@@ -101,37 +349,71 @@ fn inventory(app: &App, uid: i64, run: &Run) -> Result<BTreeMap<String, String>>
                 walk(&entry?.path(), files)?;
             }
         } else if meta.is_file() {
-            let key = path.to_string_lossy().into_owned();
-            if let std::collections::btree_map::Entry::Vacant(e) = files.entry(key) {
-                e.insert(
-                    digest(path)
-                        .with_context(|| format!("Lettura artefatto {}", path.display()))?,
-                );
-            }
+            files.insert(path.to_string_lossy().into_owned(), FileStamp::of(&meta));
         }
         Ok(())
     }
+    let roots = working_roots(app, uid, run)?;
+    if run.parent.is_none() && !cache.monitor.as_ref().is_some_and(|m| m.matches(&roots)) {
+        cache.monitor = crate::file_watch::Monitor::start(roots.clone()).ok();
+    }
     let mut files = BTreeMap::new();
-    for root in working_roots(app, uid, run)? {
+    for root in roots {
         walk(&root, &mut files)?;
     }
     Ok(files)
 }
 
 pub fn baseline(app: &App, uid: i64, run: &Run) -> Result<()> {
+    let cache = app.artifact_tracker.run(uid, &run.id);
+    baseline_cached(app, uid, run, &mut cache.inventory.lock().unwrap())
+}
+fn baseline_cached(app: &App, uid: i64, run: &Run, cache: &mut InventoryCache) -> Result<()> {
+    // Resume must rearm notifications before the next agent starts, even when
+    // the immutable baseline is already in the database.
+    if run.parent.is_none() && cache.monitor.is_none() {
+        cache.monitor = crate::file_watch::Monitor::start(working_roots(app, uid, run)?).ok();
+    }
     let exists: bool = app.store.db.lock().unwrap().query_row(
         "SELECT EXISTS(SELECT 1 FROM artifact_baselines WHERE user_id=? AND run=?)",
         params![uid, run.id],
         |r| r.get(0),
     )?;
     if !exists {
-        let files = inventory(app, uid, run)?;
-        app.store.db.lock().unwrap().execute(
+        let metadata = metadata_inventory(app, uid, run, cache)?;
+        let json = serde_json::to_string(&Baseline::Metadata {
+            version: 1,
+            metadata: metadata.clone(),
+        })?;
+        let observed = serde_json::to_string(&metadata)?;
+        let mut db = app.store.db.lock().unwrap();
+        let tx = db.transaction()?;
+        tx.execute(
             "INSERT OR IGNORE INTO artifact_baselines VALUES(?,?,?)",
-            params![uid, run.id, serde_json::to_string(&files)?],
+            params![uid, run.id, json],
         )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO artifact_observations VALUES(?,?,?)",
+            params![uid, run.id, observed],
+        )?;
+        tx.commit()?;
+        cache.hashed_files = 0;
+        // Events preceding this metadata baseline describe the initial inputs.
+        if let Some(monitor) = &cache.monitor {
+            monitor.take();
+        }
     }
     Ok(())
+}
+
+pub(crate) fn stop_monitor(app: &App, uid: i64, run: &str) {
+    let state = app.artifact_tracker.run(uid, run);
+    let monitor = state.inventory.lock().unwrap().monitor.take();
+    // OS watcher teardown can wait for its event thread. It is read-only and
+    // must not delay child completion notifications or hold the scheduler slot.
+    if let Some(monitor) = monitor {
+        tokio::task::spawn_blocking(move || drop(monitor));
+    }
 }
 
 pub(crate) fn blob_path(app: &App, uid: i64, hash: &str) -> Result<PathBuf> {
@@ -152,7 +434,16 @@ fn capture(app: &App, uid: i64, path: &Path) -> Result<(String, u64, Option<Stri
     private(&folder, true)?;
     let temp = folder.join(format!("{}.tmp", id()));
     let result = (|| {
-        let mut input = File::open(path)?;
+        let mut input = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
+        ensure!(
+            input.metadata()?.is_file(),
+            "Artefatto non regolare: {}",
+            path.display()
+        );
+        let before = FileStamp::of(&input.metadata()?);
         let mut output = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -170,6 +461,12 @@ fn capture(app: &App, uid: i64, path: &Path) -> Result<(String, u64, Option<Stri
             hash.update(&buffer[..n]);
             size += n as u64;
         }
+        ensure!(
+            FileStamp::of(&input.metadata()?) == before
+                && FileStamp::of(&std::fs::symlink_metadata(path)?) == before,
+            "File cambiato durante la raccolta: {}",
+            path.display()
+        );
         output.flush()?;
         let hash = hex::encode(hash.finalize());
         let target = blob_path(app, uid, &hash)?;
@@ -241,13 +538,22 @@ pub fn snapshot(
     binding: &str,
     summary: &str,
 ) -> Result<()> {
-    baseline(app, uid, run)?;
+    let cache = app.artifact_tracker.run(uid, &run.id);
+    let mut cache = cache.inventory.lock().unwrap();
+    baseline_cached(app, uid, run, &mut cache)?;
     let raw: String = app.store.db.lock().unwrap().query_row(
         "SELECT json FROM artifact_baselines WHERE user_id=? AND run=?",
         params![uid, run.id],
         |r| r.get(0),
     )?;
-    let initial: BTreeMap<String, String> = serde_json::from_str(&raw)?;
+    let baseline: Baseline = serde_json::from_str(&raw)?;
+    let initial: BTreeMap<String, String> = match &baseline {
+        Baseline::Legacy(hashes) => hashes.clone(),
+        Baseline::Metadata { metadata, .. } => metadata
+            .keys()
+            .map(|p| (p.clone(), String::new()))
+            .collect(),
+    };
     let previous = app.store.artifacts(uid, &run.id)?;
     let previous_files: BTreeMap<_, _> = previous
         .iter()
@@ -256,21 +562,69 @@ pub fn snapshot(
             (info.change != "report").then_some((info.location, artifact))
         })
         .collect();
-    let files = inventory(app, uid, run)?;
+    let mut observations = None;
+    let files = match &baseline {
+        Baseline::Legacy(_) => inventory_cached(app, uid, run, &mut cache)?,
+        Baseline::Metadata { metadata, .. } => {
+            let raw: Option<String> = app
+                .store
+                .db
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT json FROM artifact_observations WHERE user_id=? AND run=?",
+                    params![uid, run.id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let old: BTreeMap<String, FileStamp> = raw
+                .map(|s| serde_json::from_str(&s))
+                .transpose()?
+                .unwrap_or_else(|| metadata.clone());
+            let current = metadata_inventory(app, uid, run, &mut cache)?;
+            if let Some(monitor) = &cache.monitor {
+                let changes = monitor.take();
+                cache.pending.extend(changes.paths);
+                // Overflow/errors and silent Docker loss are recovered by the
+                // full metadata reconciliation above, without reading all GB.
+            }
+            let candidates = current
+                .iter()
+                .filter(|(path, stamp)| {
+                    old.get(*path) != Some(*stamp)
+                        || cache.pending.contains(Path::new(path))
+                        || (stamp.changed.1 == 0 && !stamp.settled())
+                        || stamp.changed.0 <= 0
+                })
+                .map(|(p, _)| (p.clone(), String::new()))
+                .collect();
+            observations = Some(current);
+            cache.hashed_files = 0;
+            candidates
+        }
+    };
     let session = run.sessions.get(binding).cloned().unwrap_or_default();
     for (location, hash) in files {
         let prior = previous_files.get(&location).copied();
-        if prior.is_some_and(|a| a.file.is_none()) && initial.get(&location) == Some(&hash) {
+        if observations.is_none()
+            && prior.is_some_and(|a| a.file.is_none())
+            && initial.get(&location) == Some(&hash)
+        {
             continue;
         }
-        if prior
-            .map(|a| a.hash.as_str())
-            .or_else(|| initial.get(&location).map(String::as_str))
-            == Some(hash.as_str())
+        if observations.is_none()
+            && prior
+                .map(|a| a.hash.as_str())
+                .or_else(|| initial.get(&location).map(String::as_str))
+                == Some(hash.as_str())
         {
             continue;
         }
         let (hash, size, preview) = capture(app, uid, Path::new(&location))?;
+        cache.hashed_files += usize::from(observations.is_some());
+        if prior.is_some_and(|a| a.hash == hash) {
+            continue;
+        }
         let (path, file) = description(
             app,
             run,
@@ -336,6 +690,11 @@ pub fn snapshot(
                 }),
             },
         )?;
+    }
+    if let Some(observations) = observations {
+        let json = serde_json::to_string(&observations)?;
+        app.store.db.lock().unwrap().execute("INSERT INTO artifact_observations VALUES(?,?,?) ON CONFLICT(user_id,run) DO UPDATE SET json=excluded.json", params![uid,run.id,json])?;
+        cache.pending.clear();
     }
     Ok(())
 }
@@ -687,6 +1046,207 @@ mod tests {
         };
         app.store.save_run(1, &run).unwrap();
         (dir, app, run, second, copied)
+    }
+
+    #[test]
+    fn inventory_reuses_hashes_but_tracks_restored_times_replacements_and_new_files() {
+        let (_dir, app, run, _, _) = fixture(true);
+        let root = Path::new(&run.workspace);
+        for i in 0..1500 {
+            std::fs::write(root.join(format!("input-{i}.txt")), vec![b'x'; 16 * 1024]).unwrap();
+        }
+        // Let the conservative coarse-timestamp safety window expire.
+        std::thread::sleep(std::time::Duration::from_millis(2100));
+        let started = std::time::Instant::now();
+        baseline(&app, 1, &run).unwrap();
+        let cold = started.elapsed();
+        let cache = app.artifact_tracker.run(1, &run.id);
+        assert_eq!(cache.inventory.lock().unwrap().hashed_files, 0);
+        let started = std::time::Instant::now();
+        snapshot(&app, 1, &run, "unchanged", "", "").unwrap();
+        let warm = started.elapsed();
+        assert_eq!(
+            cache.inventory.lock().unwrap().hashed_files,
+            0,
+            "unchanged contents must not be read again"
+        );
+        assert!(app.store.artifacts(1, &run.id).unwrap().is_empty());
+        println!("1500-file inventory: cold={cold:?}, warm={warm:?}; warm content reads=0");
+
+        let original = root.join("original.txt");
+        let modified = std::fs::metadata(&original).unwrap().modified().unwrap();
+        // Same size, deliberately restored mtime: ctime must invalidate the cache.
+        std::fs::write(&original, "modified").unwrap();
+        File::options()
+            .write(true)
+            .open(&original)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        // Atomic replacement, also preserving size and mtime, must be discovered.
+        let replaced = root.join("input-0.txt");
+        let modified = std::fs::metadata(&replaced).unwrap().modified().unwrap();
+        let temp = root.join("replacement.tmp");
+        std::fs::write(&temp, vec![b'y'; 16 * 1024]).unwrap();
+        File::options()
+            .write(true)
+            .open(&temp)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        std::fs::rename(temp, replaced).unwrap();
+        // Generated, hidden and large/binary outputs still belong in the inventory.
+        std::fs::create_dir_all(root.join("target/debug")).unwrap();
+        std::fs::write(root.join("target/debug/output.bin"), b"generated\0binary").unwrap();
+        std::fs::write(root.join(".hidden.txt"), "new hidden output").unwrap();
+        std::fs::remove_file(root.join("input-1.txt")).unwrap();
+        snapshot(&app, 1, &run, "changed", "", "").unwrap();
+        let artifacts = app.store.artifacts(1, &run.id).unwrap();
+        assert_eq!(artifacts.len(), 4);
+        assert_eq!(cache.inventory.lock().unwrap().hashed_files, 4);
+        assert!(artifacts.iter().any(|a| a.content == "modified"));
+        assert!(
+            artifacts
+                .iter()
+                .any(|a| a.path.ends_with("target/debug/output.bin"))
+        );
+        // A new process distrusts all cached metadata but preserves version history.
+        let reopened = crate::tests::app(&app.data);
+        snapshot(&reopened, 1, &run, "restarted", "", "").unwrap();
+        assert_eq!(reopened.store.artifacts(1, &run.id).unwrap().len(), 4);
+        assert_eq!(
+            reopened
+                .artifact_tracker
+                .run(1, &run.id)
+                .inventory
+                .lock()
+                .unwrap()
+                .hashed_files,
+            0
+        );
+    }
+
+    #[test]
+    fn metadata_start_and_restart_do_not_open_unchanged_source_contents() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, app, run, _, _) = fixture(true);
+        let path = Path::new(&run.workspace).join("unreadable.txt");
+        std::fs::write(&path, "must not be opened").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0)).unwrap();
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(File::open(&path).is_err());
+        }
+        baseline(&app, 1, &run).unwrap();
+        snapshot(&app, 1, &run, "task", "", "").unwrap();
+        let reopened = crate::tests::app(&app.data);
+        snapshot(&reopened, 1, &run, "next", "", "").unwrap();
+        assert!(reopened.store.artifacts(1, &run.id).unwrap().is_empty());
+        assert!(!app.data.join("system/artifact-files").exists());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[test]
+    fn legacy_hash_baselines_still_capture_changes() {
+        let (_dir, app, run, _, _) = fixture(false);
+        let initial = inventory(&app, 1, &run).unwrap();
+        app.store
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO artifact_baselines VALUES(?,?,?)",
+                params![1, run.id, serde_json::to_string(&initial).unwrap()],
+            )
+            .unwrap();
+        std::fs::write(
+            Path::new(&run.workspace).join("original.txt"),
+            "legacy changed",
+        )
+        .unwrap();
+        snapshot(&app, 1, &run, "task", "", "").unwrap();
+        assert_eq!(
+            app.store.artifacts(1, &run.id).unwrap()[0].content,
+            "legacy changed"
+        );
+    }
+
+    #[test]
+    fn metadata_recovers_changes_while_notifications_are_unavailable() {
+        let (_dir, app, run, _, _) = fixture(true);
+        baseline(&app, 1, &run).unwrap();
+        let state = app.artifact_tracker.run(1, &run.id);
+        state.inventory.lock().unwrap().monitor.take();
+        let root = Path::new(&run.workspace);
+        std::fs::write(root.join("original.txt"), "changed while not watched").unwrap();
+        std::fs::create_dir_all(root.join("new-folder")).unwrap();
+        std::fs::write(root.join("new-folder/new.txt"), "new file").unwrap();
+        snapshot(&app, 1, &run, "task", "", "").unwrap();
+        let artifacts = app.store.artifacts(1, &run.id).unwrap();
+        assert_eq!(artifacts.len(), 2);
+        assert!(
+            artifacts
+                .iter()
+                .any(|a| a.content == "changed while not watched")
+        );
+        assert!(artifacts.iter().any(|a| a.content == "new file"));
+    }
+
+    #[test]
+    fn concurrent_snapshots_do_not_create_duplicate_file_versions() {
+        let (_dir, app, run, _, _) = fixture(false);
+        baseline(&app, 1, &run).unwrap();
+        std::fs::write(Path::new(&run.workspace).join("output.txt"), "output").unwrap();
+        std::thread::scope(|scope| {
+            for node in ["first", "second"] {
+                let (app, run) = (&app, &run);
+                scope.spawn(move || snapshot(app, 1, run, node, "", node).unwrap());
+            }
+        });
+        let artifacts = app.store.artifacts(1, &run.id).unwrap();
+        assert_eq!(
+            artifacts.iter().filter(|a| a.path == "output.txt").count(),
+            1
+        );
+        assert_eq!(artifacts.len(), 3, "both reports are preserved");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_snapshot_is_joined_before_final_snapshot_without_blocking_runtime() {
+        let (_dir, app, run, _, _) = fixture(false);
+        let cache = app.artifact_tracker.run(1, &run.id);
+        let (held, ready) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard = cache.inventory.lock().unwrap();
+            held.send(()).unwrap();
+            released
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap();
+        });
+        ready.recv().unwrap();
+        let (app2, run2) = (app.clone(), run.clone());
+        let scan =
+            tokio::spawn(
+                async move { snapshot_async(&app2, 1, &run2, "task", "", "report").await },
+            );
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert!(!scan.is_finished());
+        // Stop cancels the caller, not a disk job already submitted. The final
+        // snapshot must join it even if that job is still waiting to start.
+        let state = app.artifact_tracker.run(1, &run.id);
+        assert!(state.gate.try_lock().is_err());
+        scan.abort();
+        assert!(scan.await.unwrap_err().is_cancelled());
+        let (app2, run2) = (app.clone(), run.clone());
+        let final_scan = tokio::spawn(async move {
+            snapshot_async(&app2, 1, &run2, "final", "", "final report").await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        assert!(!final_scan.is_finished());
+        release.send(()).unwrap();
+        final_scan.await.unwrap().unwrap();
+        holder.join().unwrap();
+        assert_eq!(app.store.artifacts(1, &run.id).unwrap().len(), 2);
     }
 
     #[test]

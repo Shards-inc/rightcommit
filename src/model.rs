@@ -46,6 +46,7 @@ pub struct Node {
     pub phase: String,
     pub prompt: String,
     pub command: String,
+    pub skip: bool,
     pub agent: String,
     pub runtime: String,
     pub model: String,

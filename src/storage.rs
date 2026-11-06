@@ -49,10 +49,9 @@ pub async fn source_size(
     }
     let folder = source_folder(&app, "sources", &q.path)?;
     let threshold = app.store.settings(user.id)?.source_copy_limit_bytes()?;
-    let bytes = crate::agents::source_tree_size(&folder, None)?;
-    let copy_error = crate::agents::source_copy_size(&folder, threshold)
-        .err()
-        .map(|e| e.to_string());
+    let (bytes, copy_error) = crate::artifacts::blocking(move || {
+        crate::agents::source_tree_info(&folder, Some(threshold))
+    }).await?;
     Ok(Json(
         json!({"bytes":bytes,"threshold_bytes":threshold,"copy_error":copy_error}),
     ))
@@ -152,6 +151,127 @@ fn report_view(app: &App, uid: i64, path: &str) -> anyhow::Result<Option<Value>>
     }
     Ok(None)
 }
+/// Logical byte totals, never file contents or symlink targets. Runs on a
+/// blocking worker; directory listings remain usable while totals are computed.
+fn folder_bytes(path: &Path, omit_build: bool) -> anyhow::Result<u64> {
+    let meta = std::fs::symlink_metadata(path)?;
+    anyhow::ensure!(!meta.is_symlink(), "Link simbolico non supportato");
+    if meta.is_file() {
+        return Ok(meta.len());
+    }
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if omit_build && EXPORT_OMIT.contains(&entry.file_name().to_string_lossy().as_ref()) {
+            continue;
+        }
+        if entry.file_type()?.is_symlink() {
+            continue;
+        }
+        total = total.saturating_add(folder_bytes(&entry.path(), omit_build)?);
+    }
+    Ok(total)
+}
+#[cfg(test)]
+fn logical_bytes(app: &App, uid: i64, q: &Location) -> anyhow::Result<u64> {
+    logical_bytes_cached(app, uid, q, &mut std::collections::HashMap::new())
+}
+fn logical_bytes_cached(
+    app: &App,
+    uid: i64,
+    q: &Location,
+    cache: &mut std::collections::HashMap<PathBuf, u64>,
+) -> anyhow::Result<u64> {
+    let physical = storage_path(app, uid, q).ok();
+    // Several progressive runs can share one workspace. Measure it once per request.
+    let mut total = if let Some(path) = &physical {
+        if let Some(bytes) = cache.get(path) {
+            *bytes
+        } else {
+            let bytes = folder_bytes(path, q.root == "workspaces")?;
+            cache.insert(path.clone(), bytes);
+            bytes
+        }
+    } else {
+        0
+    };
+    let mut has_report = false;
+    if q.root == "workspaces" {
+        let (id, rest) = q.path.split_once('/').unwrap_or((&q.path, ""));
+        let prefix = if rest.is_empty() {
+            String::new()
+        } else {
+            format!("{rest}/")
+        };
+        for (report, content) in reports(app, uid, id)? {
+            if let Some(relative) = report.strip_prefix(&prefix) {
+                has_report = true;
+                if let Some(path) = &physical {
+                    let existing = path.join(relative);
+                    if let Ok(m) = existing.symlink_metadata()
+                        && m.is_file()
+                    {
+                        total = total.saturating_sub(m.len());
+                    }
+                }
+                total = total.saturating_add(content.len() as u64);
+            }
+        }
+    }
+    anyhow::ensure!(physical.is_some() || has_report, "Cartella non disponibile");
+    Ok(total)
+}
+pub async fn entry_sizes(
+    State(app): State<App>,
+    user: User,
+    Query(q): Query<Location>,
+) -> ApiResult<Json<Value>> {
+    let entries = list(
+        State(app.clone()),
+        user.clone(),
+        Query(Location {
+            path: q.path.clone(),
+            root: q.root.clone(),
+            directory: false,
+        }),
+    )
+    .await?
+    .0;
+    let names: Vec<String> = entries["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|e| e["directory"] == true)
+        .filter_map(|e| e["name"].as_str().map(str::to_owned))
+        .collect();
+    let sizes = crate::artifacts::blocking(move || {
+        let mut sizes = serde_json::Map::new();
+        let mut cache = std::collections::HashMap::new();
+        for name in names {
+            let path = if q.path.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{name}", q.path)
+            };
+            let size = logical_bytes_cached(
+                &app,
+                user.id,
+                &Location {
+                    root: q.root.clone(),
+                    path,
+                    directory: false,
+                },
+                &mut cache,
+            )
+            .ok();
+            sizes.insert(name, json!(size));
+        }
+        Ok(sizes)
+    })
+    .await?;
+    Ok(Json(json!({"sizes":sizes})))
+}
+
 pub async fn list(
     State(app): State<App>,
     u: User,
@@ -388,6 +508,19 @@ pub(crate) fn rag_source(app: &App, uid: i64, root: &str, path: &str) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn folder_totals_use_metadata_and_skip_links() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("nested")).unwrap();
+        std::fs::write(d.path().join("a.txt"), b"abc").unwrap();
+        let large = std::fs::File::create(d.path().join("nested/large.bin")).unwrap();
+        large.set_len(4 * 1024 * 1024 * 1024).unwrap();
+        std::fs::create_dir(d.path().join("target")).unwrap();
+        std::fs::write(d.path().join("target/cache"), b"cache").unwrap();
+        std::os::unix::fs::symlink(d.path(), d.path().join("loop")).unwrap();
+        assert_eq!(folder_bytes(d.path(), false).unwrap(), 4 * 1024 * 1024 * 1024 + 8);
+        assert_eq!(folder_bytes(d.path(), true).unwrap(), 4 * 1024 * 1024 * 1024 + 3);
+    }
     #[tokio::test]
     async fn workspace_access_is_owned_and_excludes_internal_paths() {
         let d = tempfile::tempdir().unwrap();
@@ -425,6 +558,13 @@ mod tests {
             app.store.add_artifact(1, &artifact).unwrap();
             let view = report_view(&app, 1, &format!("{}/{path}",run.id)).unwrap().unwrap();
             assert_eq!(view["preview"], dir);
+            let q = Location {root:"workspaces".into(), path:format!("{}/{dir}/reports",run.id), directory:false};
+            assert_eq!(logical_bytes(&app, 1, &q).unwrap(), dir.len() as u64);
+            assert!(logical_bytes(&app, 2, &q).is_err());
+            std::fs::create_dir_all(Path::new(&run.workspace).join(format!("{dir}/reports"))).unwrap();
+            std::fs::write(Path::new(&run.workspace).join(&path), "outdated physical report").unwrap();
+            assert_eq!(logical_bytes(&app, 1, &q).unwrap(), dir.len() as u64);
+
             let listing = report_view(&app, 1, &format!("{}/{dir}/reports",run.id)).unwrap().unwrap();
             assert_eq!(listing["entries"].as_array().unwrap().len(), 1);
             assert_eq!(listing["entries"][0]["name"], "task.md");

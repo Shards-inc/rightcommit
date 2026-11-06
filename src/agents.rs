@@ -70,6 +70,8 @@ pub fn own(app: &App, uid: i64, p: &Path) -> Result<()> {
     Ok(())
 }
 pub fn own_tree(app: &App, uid: i64, p: &Path) -> Result<()> {
+    // Native installs never change ownership. Avoid a recursive no-op stat walk.
+    if !cfg!(target_os = "linux") || !app.isolate { return Ok(()); }
     own(app, uid, p)?;
     if p.is_dir() && !p.is_symlink() {
         for e in std::fs::read_dir(p)? {
@@ -1372,8 +1374,16 @@ pub fn source_copy_size(src: &Path, limit: u64) -> Result<u64> {
     source_tree_size(src, Some(limit))
 }
 pub fn source_tree_size(src: &Path, limit: Option<u64>) -> Result<u64> {
+    let (bytes, error) = source_tree_info(src, limit)?;
+    if let Some(error) = error { anyhow::bail!(error); }
+    Ok(bytes)
+}
+
+/// Inspect size and copy eligibility in one metadata pass, without reading contents.
+pub fn source_tree_info(src: &Path, limit: Option<u64>) -> Result<(u64, Option<String>)> {
     ensure!(!src.is_symlink(), "Symlink Source non ammesso");
     let mut total = 0u64;
+    let mut copy_error = None;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         if COPY_OMIT.contains(&entry.file_name().to_string_lossy().as_ref()) {
@@ -1381,31 +1391,34 @@ pub fn source_tree_size(src: &Path, limit: Option<u64>) -> Result<u64> {
         }
         let path = entry.path();
         let metadata = std::fs::symlink_metadata(&path)?;
-        ensure!(
-            !metadata.is_symlink(),
-            "Symlink non ammesso nel Source: {}",
-            path.display()
-        );
+        ensure!(!metadata.is_symlink(), "Symlink non ammesso nel Source: {}", path.display());
         if metadata.is_dir() {
-            total = total.saturating_add(source_tree_size(&path, limit)?);
+            let (bytes, error) = source_tree_info(&path, limit)?;
+            total = total.saturating_add(bytes);
+            copy_error = copy_error.or(error);
         } else {
-            ensure!(
-                metadata.is_file(),
-                "File Source non supportato: {}",
-                path.display()
-            );
-            if let Some(limit) = limit {
-                ensure!(
-                    metadata.len() <= limit,
+            ensure!(metadata.is_file(), "File Source non supportato: {}", path.display());
+            if let Some(limit) = limit
+                && metadata.len() > limit && copy_error.is_none() {
+                copy_error = Some(format!(
                     "Il file {} supera il limite di {} MiB: usa la sorgente direttamente oppure aumenta il limite in Configurazioni",
-                    path.display(),
-                    limit / (1024 * 1024)
-                );
+                    path.display(), limit / (1024 * 1024)));
             }
             total = total.saturating_add(metadata.len());
         }
     }
-    Ok(total)
+    Ok((total, copy_error))
+}
+
+pub async fn copy_tree_async(src: &Path, dst: &Path) -> Result<()> {
+    let (src, dst) = (src.to_path_buf(), dst.to_path_buf());
+    crate::artifacts::blocking(move || copy_tree(&src, &dst)).await
+}
+
+pub async fn own_tree_async(app: &App, uid: i64, path: &Path) -> Result<()> {
+    if !cfg!(target_os = "linux") || !app.isolate { return Ok(()); }
+    let (app, path) = (app.clone(), path.to_path_buf());
+    crate::artifacts::blocking(move || own_tree(&app, uid, &path)).await
 }
 
 pub fn copy_tree(src: &Path, dst: &Path) -> Result<()> {

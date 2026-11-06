@@ -3,6 +3,36 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.2.4] - 2026-11-06
+
+### Added
+
+- **Skip task**: a switch on Task nodes bypasses the task without calling its agent. The
+  node is shown dashed with a **Skipped** label, the run continues to the next node, and
+  the task's settings are kept so it can be turned back on. It also works inside Fork
+  branches. The Manager can skip and restore tasks as well.
+- **Set as start**: choose the node a workflow starts from in the node's menu. A marker
+  shows it on the graph.
+- A badge on **Run history** shows how many workflows are running.
+- Storage shows the size of files and folders.
+- The Activity Log can be resized by dragging its top edge.
+
+### Changed
+
+- **Edit and continue** keeps working in the same project workspace, without copying files
+  or recreating the Git repository. Each run keeps its own history, and earlier file
+  versions stay available for diffs. Only the latest run of a project can be continued.
+- New runs no longer read and copy every Source file when they start. They record file
+  information and follow changes as they happen, with a check after every step so changes
+  missed in Docker or shared folders are still caught. The original contents of Source
+  files are no longer archived automatically. Runs from earlier versions open as before.
+
+### Fixed
+
+- Workflows with large Source folders stay responsive: unchanged files are no longer
+  re-read after each step.
+- The restart preview no longer freezes the interface on large folders.
+
 ## [1.2.3] - 2026-11-05
 
 ### Changed

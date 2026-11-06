@@ -179,7 +179,7 @@ pub(crate) fn perform(app: &App, uid: i64, wid: &str, expected: &[String]) -> Re
                 uuid::Uuid::parse_str(&root.id).is_ok(),
                 "ID esecuzione non valido"
             );
-            home.join("workspaces").join(&root.id)
+            home.join("workspaces").join(crate::subworkflows::workspace_owner(root)?)
         } else {
             crate::subworkflows::workspace(app, uid, run)?
         };
@@ -253,7 +253,29 @@ pub(crate) fn perform(app: &App, uid: i64, wid: &str, expected: &[String]) -> Re
             cleanup_paths.push(path);
         }
     }
-    let paths = cleanup_paths;
+    // A historical workflow must never remove a workspace still referenced by
+    // another run, including secondary Sources and the auxiliary data folder.
+    let retained: Vec<Run> = {
+        let db = app.store.db.lock().unwrap();
+        let mut q = db.prepare("SELECT json FROM runs WHERE user_id=?")?;
+        q.query_map([uid], |row|row.get::<_,String>(0))?
+            .map(|row|Ok(serde_json::from_str(&row?)?)).collect::<Result<Vec<Run>>>()?
+    };
+    let mut retained_paths = Vec::new();
+    for run in retained.iter().filter(|r|!ids.contains(&r.id)) {
+        let lineage = crate::subworkflows::ancestors(app, uid, run)?;
+        let root = lineage.last().unwrap_or(run);
+        retained_paths.push(resolved_location(FsPath::new(&root.workspace))?);
+        retained_paths.push(resolved_location(&home.join("workspaces").join(crate::subworkflows::workspace_owner(root)?))?);
+        for (index,node) in root.workflow.nodes.iter().filter(|n|n.kind=="Source").enumerate() {
+            let p = PathBuf::from(crate::source_access::source_path(root,index,node));
+            retained_paths.push(resolved_location(&if p.is_absolute(){p}else{FsPath::new(&root.workspace).join(p)})?);
+        }
+    }
+    let paths: Vec<_> = cleanup_paths.into_iter().filter(|p| {
+        let p = resolved_location(p);
+        p.as_ref().is_ok_and(|p|!retained_paths.iter().any(|r|p.starts_with(r)||r.starts_with(p)))
+    }).collect();
     let trash = app.data.join("system/deletions").join(crate::model::id());
     if !paths.is_empty() {
         ensure!(
@@ -277,7 +299,7 @@ pub(crate) fn perform(app: &App, uid: i64, wid: &str, expected: &[String]) -> Re
         let mut db = app.store.db.lock().unwrap();
         let tx = db.transaction()?;
         for rid in &ids {
-            for table in ["artifacts", "artifact_baselines", "artifact_recoveries", "decisions", "events"] {
+            for table in ["artifacts", "artifact_observations", "artifact_baselines", "artifact_recoveries", "decisions", "events"] {
                 tx.execute(
                     &format!("DELETE FROM {table} WHERE user_id=? AND run=?"),
                     params![uid, rid],

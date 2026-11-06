@@ -1,3 +1,4 @@
+use rusqlite::OptionalExtension;
 use crate::{
     App, agents,
     auth::{self, ApiResult, bad},
@@ -167,6 +168,7 @@ pub fn router(app: App) -> Router {
             axum::routing::post(markdown_preview),
         )
         .route("/api/storage", axum::routing::get(crate::storage::list))
+        .route("/api/storage/entry-sizes", axum::routing::get(crate::storage::entry_sizes))
         .route(
             "/api/storage/source-size",
             axum::routing::get(crate::storage::source_size),
@@ -254,6 +256,7 @@ pub fn router(app: App) -> Router {
         )
         .route("/api/workflows/validate", axum::routing::post(validate))
         .route("/api/runs", axum::routing::get(runs).post(create_run))
+        .route("/api/runs/active-count", axum::routing::get(active_workflow_count))
         .route("/api/runs/{id}", axum::routing::get(run))
         .route("/api/runs/{id}/start", axum::routing::post(start))
         .route("/api/runs/{id}/continue", axum::routing::post(continue_run))
@@ -800,6 +803,9 @@ async fn validate(
 struct RunFilter {
     workflow_id: Option<String>,
 }
+async fn active_workflow_count(State(a): State<App>, u: User) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({"count":a.store.active_workflow_count(u.id)?})))
+}
 async fn runs(
     State(a): State<App>,
     u: User,
@@ -851,7 +857,7 @@ pub(crate) async fn prepare_run(a: &App, uid: i64, b: StartRun, reserved_id: Opt
             && !(i == 0 && b.base_run.is_some())
         {
             let path = crate::storage::source_folder(&a, "sources", &n.location)?;
-            let bytes = crate::agents::source_copy_size(&path, copy_limit)?;
+            let bytes = crate::artifacts::blocking(move || crate::agents::source_copy_size(&path, copy_limit)).await?;
             if bytes > copy_limit && !b.allow_large_source_copy {
                 anyhow::bail!(
                     "La cartella supera {} MiB: conferma la copia oppure scegli Modifica sorgente permanentemente",
@@ -867,6 +873,9 @@ pub(crate) async fn prepare_run(a: &App, uid: i64, b: StartRun, reserved_id: Opt
 
 async fn run(State(a): State<App>, u: User, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let r = a.store.run(u.id, &id)?;
+    let workspace_successor: Option<String> = a.store.db.lock().unwrap().query_row(
+        "SELECT id FROM runs WHERE user_id=? AND json_extract(json,'$.context.workspace-predecessor')=? LIMIT 1",
+        rusqlite::params![u.id,id],|row|row.get(0)).optional().map_err(anyhow::Error::from)?;
     let artifact_app=&a;
     let artifacts=a.store.artifacts(u.id,&id)?.iter().map(|a|json!({"id":a.id,"node":a.node,"path":a.path,"version":a.version,"hash":a.hash,"session":a.session,"turn":a.turn,"created":a.created,"file":crate::artifacts::file_info(artifact_app,u.id,&r,a)})).collect::<Vec<_>>();
     let children = r.children.iter().map(|call| {
@@ -887,7 +896,7 @@ async fn run(State(a): State<App>, u: User, Path(id): Path<String>) -> ApiResult
     }
     let review_run = attention.pending.as_ref().map(|_| attention.id.clone());
     Ok(Json(
-        json!({"revision_available":crate::revision::is_available(&a,u.id,&r),"continue_nodes":crate::continuation::candidates(&a,u.id,&r),"run":r,"children":children,"review_run":review_run,"artifacts":artifacts,"decisions":a.store.decisions(u.id,&id)?}),
+        json!({"workspace_successor":workspace_successor,"revision_available":crate::revision::is_available(&a,u.id,&r),"continue_nodes":crate::continuation::candidates(&a,u.id,&r),"run":r,"children":children,"review_run":review_run,"artifacts":artifacts,"decisions":a.store.decisions(u.id,&id)?}),
     ))
 }
 #[derive(Deserialize)]
@@ -954,13 +963,9 @@ async fn revision_preview(
 ) -> ApiResult<Json<crate::revision::Plan>> {
     let lifecycle = a.lifecycle.clone();
     let _guard = lifecycle.read().await;
-    Ok(Json(crate::revision::preview(
-        &a,
-        u.id,
-        &id,
-        &b.workflow,
-        b.node.as_deref(),
-    )?))
+    Ok(Json(crate::artifacts::blocking(move || crate::revision::preview(
+        &a, u.id, &id, &b.workflow, b.node.as_deref(),
+    )).await?))
 }
 async fn revision_create(
     State(a): State<App>,

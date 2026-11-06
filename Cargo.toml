@@ -1,6 +1,6 @@
 [package]
 name = "rightcommit"
-version = "1.2.3"
+version = "1.2.4"
 edition = "2024"
 license = "Apache-2.0"
 description = "Self-hosted, Rust-built orchestration for Claude Code, Codex and Pi Agent. Parallel workflows, full control over every commit, and FinOps that shows exactly what each agent and model costs."
@@ -50,6 +50,7 @@ lancedb = { version = "=0.41.0", default-features = false }
 arrow-array = "58"
 arrow-schema = "58"
 dotenvy = "0.15.7"
+notify = "8"
 
 [dev-dependencies]
 tempfile = "3"

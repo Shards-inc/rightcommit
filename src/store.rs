@@ -64,9 +64,11 @@ impl Store {
         CREATE TABLE IF NOT EXISTS schedule_occurrences(schedule_id TEXT NOT NULL,user_id INTEGER NOT NULL,due INTEGER NOT NULL,run_id TEXT UNIQUE,state TEXT NOT NULL,message TEXT NOT NULL,PRIMARY KEY(schedule_id,due));
         CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,json TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS runs_owner ON runs(user_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS runs_workspace_successor ON runs(user_id,json_extract(json,'$.context.workspace-predecessor')) WHERE json_extract(json,'$.context.workspace-predecessor') IS NOT NULL;
         CREATE INDEX IF NOT EXISTS runs_workflow ON runs(user_id,json_extract(json,'$.workflow.id'));
         CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,run TEXT NOT NULL,node TEXT NOT NULL,json TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS artifacts_run ON artifacts(user_id,run);
+        CREATE TABLE IF NOT EXISTS artifact_observations(user_id INTEGER NOT NULL,run TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(user_id,run));
         CREATE TABLE IF NOT EXISTS artifact_baselines(user_id INTEGER NOT NULL,run TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(user_id,run));
         CREATE TABLE IF NOT EXISTS artifact_recoveries(user_id INTEGER NOT NULL,run TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(user_id,run));
         CREATE TABLE IF NOT EXISTS decisions(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,run TEXT NOT NULL,json TEXT NOT NULL);
@@ -194,6 +196,12 @@ impl Store {
             "SELECT json FROM runs WHERE user_id=? ORDER BY rowid DESC LIMIT 100",
             params![uid],
         )
+    }
+    pub fn active_workflow_count(&self, uid: i64) -> Result<u64> {
+        Ok(self.db.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM runs WHERE user_id=? AND json_extract(json,'$.parent') IS NULL AND json_extract(json,'$.status') IN ('starting','running','waiting_external','waiting_child')",
+            params![uid], |row| row.get::<_, i64>(0),
+        )? as u64)
     }
     pub fn workflow_runs(&self, uid: i64, workflow: &str) -> Result<Vec<Run>> {
         self.json_rows(

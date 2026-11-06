@@ -3,6 +3,7 @@ mod agent_activity;
 mod agent_auth;
 mod agents;
 mod artifacts;
+mod file_watch;
 mod api;
 mod auth;
 mod users;
@@ -57,6 +58,7 @@ use tokio::sync::broadcast;
 #[derive(Clone)]
 pub struct App {
     pub store: store::Store,
+    pub(crate) artifact_tracker: Arc<artifacts::Tracker>,
     pub mcp: Arc<mcp_client::Hub>,
     pub rag: Arc<rag::Hub>,
     pub data: PathBuf,
@@ -128,6 +130,7 @@ async fn run() -> anyhow::Result<()> {
     let (bus, _) = broadcast::channel(512);
     let app = App {
         store,
+        artifact_tracker: Arc::default(),
         mcp: Arc::default(),
         rag: Arc::default(),
         data,

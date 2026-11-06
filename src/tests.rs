@@ -11,6 +11,7 @@ pub(crate) fn app(dir: &Path) -> App {
     let (bus, _) = tokio::sync::broadcast::channel(16);
     App {
         store: Store::open(dir).unwrap(),
+        artifact_tracker: Arc::default(),
         mcp: Arc::default(),
         rag: Arc::default(),
         data: dir.to_path_buf(),
@@ -1500,4 +1501,27 @@ fn non_admin_claude_codex_ignore_all_host_provider_configuration() {
         assert_eq!(env.len(),1);assert_eq!(env.values().next().unwrap(),"saved-app-key");
         assert!(!agents::resolve_provider_environment_for_user(1,runtime,&AgentConfig::default(),host).is_empty());
     }
+}
+
+#[tokio::test]
+async fn active_workflow_count_is_owned_unlimited_and_does_not_double_count_children() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let mut run = engine::create(&app, 1, crate::presets::all().remove(0), "count".into(), None).await.unwrap();
+    for status in ["starting", "running", "waiting_external", "waiting_child"] {
+        run.id = id();run.status=status.into();app.store.save_run(1,&run).unwrap();
+    }
+    // Hide the active roots beyond the history page; no list limit may affect the badge.
+    for _ in 0..105 {
+        run.id=id();run.status="completed".into();app.store.save_run(1,&run).unwrap();
+    }
+    for status in ["paused", "waiting_review", "waiting_user", "failed", "interrupted"] {
+        run.id=id();run.status=status.into();app.store.save_run(1,&run).unwrap();
+    }
+    run.id=id();run.status="running".into();app.store.save_run(2,&run).unwrap();
+    run.id=id();run.parent=Some(ParentRun{run:"parent".into(),node:"call".into()});app.store.save_run(1,&run).unwrap();
+    // The initial fixture is paused, so it does not add to the four active roots.
+    assert_eq!(app.store.active_workflow_count(1).unwrap(),4);
+    assert_eq!(app.store.active_workflow_count(2).unwrap(),1);
+    assert_eq!(app.store.active_workflow_count(3).unwrap(),0);
 }

@@ -4,12 +4,11 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
 };
-use std::{io::Read, os::unix::fs::PermissionsExt};
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 fn executable(n: &Node) -> bool {
     !["Source", "Agent", "MCP", "RAG", "Comment"].contains(&n.kind.as_str())
@@ -154,77 +153,42 @@ fn source_roots(r: &Run) -> Vec<(String, PathBuf)> {
         })
         .collect()
 }
-fn files(root: &Path, prefix: &str, output: &mut Vec<String>) -> Result<()> {
-    for entry in std::fs::read_dir(root)? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if [".git", "target", "node_modules"].contains(&name.as_str()) {
-            continue;
-        }
-        let meta = std::fs::symlink_metadata(entry.path())?;
-        ensure!(
-            !meta.is_symlink(),
-            "La copia del workspace non supporta link simbolici: {name}"
-        );
-        let path = format!("{prefix}{name}");
-        if meta.is_dir() {
-            files(&entry.path(), &format!("{path}/"), output)?;
-        } else {
-            ensure!(meta.is_file(), "File non supportato: {path}");
-            output.push(path);
-        }
-        ensure!(
-            output.len() <= 20000,
-            "Troppi file per l’anteprima della ripartenza (massimo 20000)"
-        );
-    }
-    Ok(())
-}
-fn fingerprint(r: &Run) -> Result<String> {
-    fn scan(root: &Path, records: &mut Vec<(String, String, u32)>, prefix: &str) -> Result<()> {
+// Enumerate and hash in the same walk: preview used to enumerate every directory
+// twice and hash copied secondary sources again inside their parent workspace.
+fn workspace_snapshot(r: &Run) -> Result<(String, Vec<String>)> {
+    fn scan(root: &Path, records: &mut Vec<(String, String, u32)>, files: &mut Vec<String>, prefix: &str, copy_prefix: &str) -> Result<()> {
         for entry in std::fs::read_dir(root)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if [".git", "target", "node_modules"].contains(&name.as_str()) {
-                continue;
-            }
+            if [".git", "target", "node_modules"].contains(&name.as_str()) { continue; }
             let meta = std::fs::symlink_metadata(entry.path())?;
             ensure!(!meta.is_symlink(), "Link simbolico non supportato: {name}");
             let path = format!("{prefix}{name}");
+            let copy_path = format!("{copy_prefix}{name}");
             if meta.is_dir() {
-                scan(&entry.path(), records, &format!("{path}/"))?;
+                scan(&entry.path(), records, files, &format!("{path}/"), &format!("{copy_path}/"))?;
             } else {
                 ensure!(meta.is_file(), "File non supportato: {path}");
-                let mut file = std::fs::File::open(entry.path())?;
-                let mut hasher = Sha256::new();
-                let mut buffer = [0u8; 16384];
-                loop {
-                    let n = file.read(&mut buffer)?;
-                    if n == 0 {
-                        break;
-                    }
-                    hasher.update(&buffer[..n]);
-                }
-                records.push((
-                    path,
-                    hex::encode(hasher.finalize()),
-                    meta.permissions().mode() & 0o777,
-                ));
+                let stamp = (meta.dev(), meta.ino(), meta.len(), meta.mtime(), meta.mtime_nsec(), meta.ctime(), meta.ctime_nsec());
+                records.push((path, hash(serde_json::to_vec(&stamp)?), meta.permissions().mode() & 0o777));
+                files.push(copy_path);
             }
-            ensure!(
-                records.len() <= 20000,
-                "Troppi file per verificare la ripartenza (massimo 20000)"
-            );
+            ensure!(records.len() <= 20000, "Troppi file per verificare la ripartenza (massimo 20000)");
         }
         Ok(())
     }
     let mut records = Vec::new();
-    scan(Path::new(&r.workspace), &mut records, "")?;
+    let mut files = Vec::new();
+    scan(Path::new(&r.workspace), &mut records, &mut files, "", "")?;
     for (id, root) in source_roots(r).into_iter().skip(1) {
-        scan(&root, &mut records, &format!("secondary:{id}/"))?;
+        if !root.starts_with(&r.workspace) {
+            scan(&root, &mut records, &mut files, &format!("secondary:{id}/"), &format!(".rightcommit/sources/{id}/"))?;
+        }
     }
     records.sort();
-    Ok(hash(serde_json::to_vec(&records)?))
+    files.sort();
+    files.dedup();
+    Ok((hash(serde_json::to_vec(&records)?), files))
 }
 // The default restart is the first non-reusable node on the previously successful route.
 // An explicit restart may go earlier on that prefix, never skip an invalid prerequisite.
@@ -252,6 +216,7 @@ fn plan_graph(r: &Run, w: &Workflow, requested: Option<&str>) -> Result<Plan> {
                 Some("changed")
             }
             _ if policy_changed && executable(n) => Some("policy"),
+            _ if n.kind == "Task" && n.skip && r.states.get(&n.id).is_some_and(|s| s == "bypassed") => None,
             _ if executable(n)
                 && (r.states.get(&n.id).is_none_or(|s| s != "completed")
                     || r.outputs.get(&n.id).is_none_or(|o| o.status != "completed")) =>
@@ -291,14 +256,11 @@ fn plan_graph(r: &Run, w: &Workflow, requested: Option<&str>) -> Result<Plan> {
             default = Some(id);
             break;
         }
-        let output = r
-            .outputs
-            .get(&id)
-            .context("Risultato precedente non disponibile")?;
-        let outcome = if n.kind == "Gate" {
-            output.decision.as_str()
-        } else {
+        let outcome = if n.kind == "Task" && n.skip {
             ""
+        } else {
+            let output = r.outputs.get(&id).context("Risultato precedente non disponibile")?;
+            if n.kind == "Gate" { output.decision.as_str() } else { "" }
         };
         cursor = w
             .next(&id, outcome)
@@ -463,34 +425,28 @@ pub fn preview(
     finish_plan(app, uid, &r, w, &mut p)?;
     Ok(p)
 }
+fn retained_artifact(artifact: &Artifact, kept: &HashSet<&str>) -> bool {
+    kept.contains(artifact.node.as_str()) || (!crate::source_access::report_path(&artifact.path)
+        && artifact.file.as_ref().is_none_or(|f|f.change != "report"))
+}
+
 fn finish_plan(app: &App, uid: i64, r: &Run, w: &Workflow, p: &mut Plan) -> Result<()> {
     let kept: HashSet<_> = p.kept.iter().map(|s| s.id.as_str()).collect();
     p.artifacts = app
         .store
         .artifacts(uid, &r.id)?
         .iter()
-        .filter(|a| kept.contains(a.node.as_str()))
+        .filter(|a| retained_artifact(a, &kept))
         .map(|a| json!({"node":a.node,"path":a.path,"version":a.version}))
         .collect();
-    files(Path::new(&r.workspace), "", &mut p.workspace_files)?;
-    for (id, root) in source_roots(r).into_iter().skip(1) {
-        // Secondary copied sources are already inside the primary workspace.
-        if !root.starts_with(&r.workspace) {
-            files(
-                &root,
-                &format!(".rightcommit/sources/{id}/"),
-                &mut p.workspace_files,
-            )?;
-        }
-    }
-    p.workspace_files.sort();
-    p.workspace_files.dedup();
+    let (proof, files) = workspace_snapshot(r)?;
+    p.workspace_files = files;
     let saved = app.store.workflow(uid, &w.id)?;
     p.token = hash(serde_json::to_vec(&(
         r,
         w,
         &p,
-        fingerprint(r)?,
+        proof,
         saved,
         app.store.settings(uid)?,
         workflow_tree(app, uid, w, 0)?,
@@ -513,7 +469,8 @@ pub async fn create(
     if let Some(raw) = existing {
         return Ok((serde_json::from_str(&raw)?, false));
     }
-    let p = preview(app, uid, rid, &w, requested)?;
+    let (preview_app, preview_id, preview_workflow, preview_node) = (app.clone(), rid.to_owned(), w.clone(), requested.map(str::to_owned));
+    let p = crate::artifacts::blocking(move || preview(&preview_app, uid, &preview_id, &preview_workflow, preview_node.as_deref())).await?;
     ensure!(
         p.token == token,
         "La run, i file o il workflow sono cambiati. Aggiorna l’anteprima prima di continuare."
@@ -523,33 +480,25 @@ pub async fn create(
         .as_ref()
         .context("Scegli un nodo da cui ripartire nell’anteprima")?;
     let old = app.store.run(uid, rid)?;
-    let proof = fingerprint(&old)?;
     let new_id = id();
-    let dest = agents::user_home(app, uid)?
-        .join("workspaces")
-        .join(&new_id);
+    let dest = PathBuf::from(&old.workspace);
     let result: Result<Run> = async {
-        agents::copy_tree(Path::new(&old.workspace), &dest)?;
-        let mut context = BTreeMap::new();
-        for (index,(source, root)) in source_roots(&old).into_iter().enumerate() {
-            if index == 0 { context.insert(format!("source-path:{source}"), ".".into()); continue; }
-            let target = dest.join(".rightcommit/sources").join(&source);
-            if target.exists() { std::fs::remove_dir_all(&target)?; }
-            agents::copy_tree(&root, &target)?;
-            context.insert(format!("source-path:{source}"), format!(".rightcommit/sources/{source}"));
+        let mut context: BTreeMap<String,String> = old.context.iter()
+            .filter(|(k,_)| k.starts_with("direct-source:") || k.starts_with("source-path:") || k.as_str()=="direct-primary")
+            .map(|(k,v)|(k.clone(),v.clone())).collect();
+        for (source, root) in source_roots(&old) {
+            if !context.contains_key(&format!("direct-source:{source}")) {
+                context.insert(format!("source-path:{source}"), root.to_string_lossy().into_owned());
+            }
         }
-        ensure!(fingerprint(&old)? == proof, "I file sono cambiati durante la copia: aggiorna l’anteprima");
-        agents::own_tree(app, uid, &dest)?;
-        agents::tool(app, uid, &dest, "git", &["init","-b","main"],30).await?;
-        agents::tool(app, uid, &dest, "git", &["add","--all"],30).await?;
-        agents::tool(app, uid, &dest, "git", &["-c","core.hooksPath=/dev/null","-c","user.name=Nodo","-c","user.email=nodo@local","commit","--allow-empty","-m","Inherited run workspace"],30).await?;
+        context.insert("workspace-owner".into(), crate::subworkflows::workspace_owner(&old)?.to_owned());
+        context.insert("workspace-predecessor".into(), old.id.clone());
         let keep: HashSet<_> = p.kept.iter().map(|s| s.id.as_str()).collect();
         let mut workflow = w.clone();
-        for n in &mut workflow.nodes { if n.kind == "Source" && n.source_type == "folder" { n.source_mode = "copy".into(); } }
         let settings = app.store.settings(uid)?;
         for n in &mut workflow.nodes { if n.kind == "Agent" && n.runtime.is_empty() { n.runtime = settings.default_runtime.clone(); } }
         let mut states = BTreeMap::new();
-        for n in workflow.nodes.iter().filter(|n| n.kind != "Comment") { states.insert(n.id.clone(), if !executable(n) || keep.contains(n.id.as_str()) {"completed"} else {"queued"}.into()); }
+        for n in workflow.nodes.iter().filter(|n| n.kind != "Comment") { states.insert(n.id.clone(), if keep.contains(n.id.as_str()) && n.kind == "Task" && n.skip {"bypassed"} else if !executable(n) || keep.contains(n.id.as_str()) {"completed"} else {"queued"}.into()); }
         let outputs = old.outputs.iter().filter(|(id,_)| keep.contains(id.as_str())).map(|(id,o)|(id.clone(),o.clone())).collect();
         for (key,value) in &old.context {
             if key == "user-note" { context.insert(key.clone(),value.clone()); }
@@ -558,12 +507,12 @@ pub async fn create(
             context.insert(format!("inherited-workflow:{}",node.id),hash(serde_json::to_vec(&workflow_tree(app,uid,&app.store.workflow(uid,&node.workflow_id)?,1)?)?));
         }
         context.insert("revision-base".into(), old.id.clone()); context.insert("revision-token".into(), token.into());
-        context.insert("source-run".into(), json!({"run_id":old.id,"inherited_results":p.kept,"note":"Inherited successful prefix; historical approvals only. Files copied into a new workspace. No native sessions or external-operation authorizations reused."}).to_string());
+        context.insert("source-run".into(), json!({"run_id":old.id,"inherited_results":p.kept,"note":"Inherited successful prefix; historical approvals only. The project workspace is shared; saved artifact versions remain immutable. No native sessions or external-operation authorizations reused."}).to_string());
         let mut last_node = None; let mut cursor = Some(workflow.entry.clone()); let mut last_task = None;
         while let Some(node) = cursor {
             if &node == restart { break; }
             let n = workflow.node(&node)?;
-            if n.kind == "Task" { last_task = Some(node.clone()); }
+            if n.kind == "Task" && !n.skip { last_task = Some(node.clone()); }
             if n.kind == "Memory" && let Some(output) = old.outputs.get(&node) { context.insert(format!("handoff:{}",n.target), output.summary.clone()); }
             last_node = Some(node.clone());
             let outcome = if n.kind == "Gate" { old.outputs.get(&node).map(|o|o.decision.as_str()).unwrap_or("") } else { "" };
@@ -573,18 +522,23 @@ pub async fn create(
         let mut execution = workflow.execution.clone(); if execution.runtime.is_empty() { execution.runtime = settings.default_runtime; }
         let r = Run { id:new_id.clone(),workflow,status:"paused".into(),current:restart.clone(),created:now(),updated:now(),workspace:dest.to_string_lossy().into(),states,outputs,context,input:old.input.clone(),execution,parent:None,children:Vec::new(),sessions:BTreeMap::new(),pending:None,active_edge,pause_requested:false,attempts:BTreeMap::new(),reworks:BTreeMap::new(),last_task,last_node,error:None };
         let mut artifacts = Vec::new();
-        for mut a in app.store.artifacts(uid,rid)?.into_iter().filter(|a|keep.contains(a.node.as_str())) { crate::artifacts::rebase(app,uid,&old,&r,&mut a);a.id=id();a.run=new_id.clone();artifacts.push(a); }
-        let mut db = app.store.db.lock().unwrap(); let tx=db.transaction()?;
-        tx.execute("INSERT INTO runs VALUES(?,?,?)",rusqlite::params![r.id,uid,serde_json::to_string(&r)?])?;
-        tx.execute("INSERT INTO workflows VALUES(?,?,?) ON CONFLICT(id,user_id) DO UPDATE SET json=json_set(excluded.json,'$.created',COALESCE(json_extract(workflows.json,'$.created'),0))",rusqlite::params![w.id,uid,serde_json::to_string(&w)?])?;
-        for a in artifacts { tx.execute("INSERT INTO artifacts VALUES(?,?,?,?,?)",rusqlite::params![a.id,uid,a.run,a.node,serde_json::to_string(&a)?])?; }
-        tx.commit()?; drop(db);
-        crate::artifacts::baseline(app, uid, &r)?;
+        for mut a in app.store.artifacts(uid,rid)?.into_iter().filter(|a|retained_artifact(a,&keep)) { a.id=id();a.run=new_id.clone();artifacts.push(a); }
+        {
+            let mut db = app.store.db.lock().unwrap(); let tx=db.transaction()?;
+            let successor: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM runs WHERE user_id=? AND json_extract(json,'$.context.workspace-predecessor')=?)",rusqlite::params![uid,old.id],|row|row.get(0))?;
+            ensure!(!successor, "Continua dall’ultima esecuzione del progetto");
+            tx.execute("INSERT INTO runs VALUES(?,?,?)",rusqlite::params![r.id,uid,serde_json::to_string(&r)?])?;
+            tx.execute("INSERT INTO workflows VALUES(?,?,?) ON CONFLICT(id,user_id) DO UPDATE SET json=json_set(excluded.json,'$.created',COALESCE(json_extract(workflows.json,'$.created'),0))",rusqlite::params![w.id,uid,serde_json::to_string(&w)?])?;
+            for a in artifacts { tx.execute("INSERT INTO artifacts VALUES(?,?,?,?,?)",rusqlite::params![a.id,uid,a.run,a.node,serde_json::to_string(&a)?])?; }
+            // Continue the same project's last checkpoint, including edits made
+            // while paused. Historical hash-only baselines upgrade on demand.
+            tx.execute("INSERT OR IGNORE INTO artifact_baselines SELECT user_id,?,json FROM artifact_baselines WHERE user_id=? AND run=? AND json_extract(json,'$.version')=1",rusqlite::params![r.id,uid,old.id])?;
+            tx.execute("INSERT OR IGNORE INTO artifact_observations SELECT user_id,?,json FROM artifact_observations WHERE user_id=? AND run=?",rusqlite::params![r.id,uid,old.id])?;
+            tx.commit()?;
+        }
+        crate::artifacts::baseline_async(app, uid, &r).await?;
         Ok(r)
     }.await;
-    if result.is_err() {
-        let _ = std::fs::remove_dir_all(&dest);
-    }
     let r = result?;
     agents::emit(
         app,
@@ -655,6 +609,21 @@ mod tests {
             });
         }
         w
+    }
+    #[tokio::test]
+    async fn bypassed_task_is_preserved_until_skip_changes() {
+        let (_dir, app, mut r) = fixture().await;
+        r.workflow.nodes.iter_mut().find(|n| n.id == "a").unwrap().skip = true;
+        r.states.insert("a".into(), "bypassed".into());
+        r.outputs.remove("a");
+        app.store.save_run(1, &r).unwrap();
+        let w = insert(&r);
+        let p = preview(&app, 1, &r.id, &w, None).unwrap();
+        assert!(p.kept.iter().any(|n| n.id == "a"));
+        let mut enabled = w;
+        enabled.nodes.iter_mut().find(|n| n.id == "a").unwrap().skip = false;
+        let p = preview(&app, 1, &r.id, &enabled, None).unwrap();
+        assert!(p.rerun.iter().any(|n| n.id == "a"));
     }
     #[tokio::test]
     async fn insertion_keeps_prefix_and_never_skips_new_prerequisites() {
@@ -746,7 +715,7 @@ mod tests {
         assert_eq!(app.store.runs(1).unwrap().len(), 1);
     }
     #[tokio::test]
-    async fn fork_copies_work_and_compatible_artifacts_but_not_sessions_or_authorizations() {
+    async fn continuation_shares_work_and_preserves_artifacts_without_reusing_authorizations() {
         let (_dir, app, mut r) = fixture().await;
         std::fs::write(
             Path::new(&r.workspace).join("finished-work.txt"),
@@ -807,12 +776,12 @@ runtime: "codex".into(),
         }
         let w = insert(&r);
         let p = preview(&app, 1, &r.id, &w, None).unwrap();
-        assert_eq!(p.artifacts.len(), 1);
+        assert_eq!(p.artifacts.len(), 2);
         let (fork, created) = create(&app, 1, &r.id, w.clone(), None, &p.token)
             .await
             .unwrap();
         assert!(created);
-        assert_ne!(fork.workspace, r.workspace);
+        assert_eq!(fork.workspace, r.workspace);
         assert_eq!(fork.current, "b");
         assert_eq!(fork.last_node.as_deref(), Some("a"));
         assert_eq!(fork.last_task.as_deref(), Some("a"));
@@ -835,7 +804,7 @@ runtime: "codex".into(),
             original
         );
         let artifacts = app.store.artifacts(1, &fork.id).unwrap();
-        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts.len(), 2);
         assert_eq!(artifacts[0].node, "a");
         assert_ne!(
             artifacts[0].id,
@@ -848,7 +817,7 @@ runtime: "codex".into(),
         .unwrap();
         assert_eq!(
             std::fs::read_to_string(Path::new(&r.workspace).join("finished-work.txt")).unwrap(),
-            "Work already done"
+            "new work"
         );
         let (same, created) = create(&app, 1, &r.id, w, None, &p.token).await.unwrap();
         assert!(!created);
@@ -1046,12 +1015,76 @@ runtime: "codex".into(),
         let w = insert(&r);
         let p = preview(&app, 1, &r.id, &w, None).unwrap();
         let (fork, _) = create(&app, 1, &r.id, w, None, &p.token).await.unwrap();
-        assert_eq!(crate::source_access::source_path(&fork, 1, &source), ".rightcommit/sources/secondary");
-        assert_eq!(std::fs::read_to_string(Path::new(&fork.workspace).join(".rightcommit/sources/secondary/evidence.txt")).unwrap(), "legacy evidence");
+        assert_eq!(Path::new(&crate::source_access::source_path(&fork, 1, &source)), legacy);
+        assert_eq!(std::fs::read_to_string(Path::new(&fork.context["source-path:secondary"]).join("evidence.txt")).unwrap(), "legacy evidence");
         assert!(legacy.join("evidence.txt").exists());
     }
     #[tokio::test]
-    async fn direct_sources_become_independent_copies() {
+    async fn shared_project_retains_files_until_the_last_reference_and_blocks_old_runs() {
+        let (_dir, app, r) = fixture().await;
+        let w = insert(&r);
+        let p = preview(&app, 1, &r.id, &w, None).unwrap();
+        let (mut next, _) = create(&app, 1, &r.id, w, None, &p.token).await.unwrap();
+        assert_eq!(next.workspace, r.workspace);
+        assert!(crate::engine::launch(app.clone(),1,r.id.clone()).is_err());
+        assert!(preview(&app,1,&r.id,&r.workflow,None).is_err());
+        app.busy.lock().unwrap().insert(r.id.clone());
+        assert!(crate::subworkflows::can_launch(&app,1,&next).is_err());
+        app.busy.lock().unwrap().clear();
+        // Model retention by a separate workflow, including after its owner run is deleted.
+        next.workflow.id = "retained-project".into();
+        app.store.save_workflow(1,&next.workflow).unwrap();
+        app.store.save_run(1,&next).unwrap();
+        crate::deletion::perform(&app,1,&r.workflow.id,&[r.id.clone()]).unwrap();
+        assert!(Path::new(&next.workspace).exists());
+        assert_eq!(crate::subworkflows::workspace(&app,1,&next).unwrap(),Path::new(&next.workspace));
+        std::fs::write(Path::new(&next.workspace).join("new-output.txt"),"continued").unwrap();
+        crate::artifacts::snapshot(&app,1,&next,"b","","").unwrap();
+        assert!(app.store.artifacts(1,&next.id).unwrap().iter().any(|a|a.content=="continued"));
+        crate::deletion::perform(&app,1,&next.workflow.id,&[next.id.clone()]).unwrap();
+        assert!(!Path::new(&next.workspace).exists());
+    }
+
+    #[tokio::test]
+    async fn file_versions_survive_rerunning_their_producing_step_and_restart() {
+        let (_dir,app,r)=fixture().await;
+        let path=Path::new(&r.workspace).join("analysis.md");
+        std::fs::write(&path,"first version").unwrap();
+        crate::artifacts::snapshot(&app,1,&r,"a","","").unwrap();
+        let original=app.store.artifacts(1,&r.id).unwrap().into_iter().find(|a|a.path=="analysis.md").unwrap();
+        let w=insert(&r);
+        let p=preview(&app,1,&r.id,&w,Some("a")).unwrap();
+        assert!(p.kept.is_empty());
+        let (next,_)=create(&app,1,&r.id,w,Some("a"),&p.token).await.unwrap();
+        std::fs::write(&path,"second version").unwrap();
+        crate::artifacts::snapshot(&app,1,&next,"a","","").unwrap();
+        let reopened=crate::tests::app(&app.data);
+        std::fs::write(&path,"third version").unwrap();
+        crate::artifacts::snapshot(&reopened,1,&next,"a","","").unwrap();
+        let versions:Vec<_>=reopened.store.artifacts(1,&next.id).unwrap().into_iter().filter(|a|a.path=="analysis.md").collect();
+        assert_eq!(versions.iter().map(|a|a.version).collect::<Vec<_>>(),vec![1,2,3]);
+        assert_eq!(versions.iter().map(|a|a.content.as_str()).collect::<Vec<_>>(),vec!["first version","second version","third version"]);
+        assert_eq!(app.store.artifact(1,&original.id).unwrap().content,"first version");
+        assert!(next.outputs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn shared_continuation_does_not_read_or_copy_input_contents() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir,app,r)=fixture().await;
+        let path=Path::new(&r.workspace).join("unreadable.txt");
+        std::fs::write(&path,"no reading or copying").unwrap();
+        std::fs::set_permissions(&path,std::fs::Permissions::from_mode(0)).unwrap();
+        let w=insert(&r);
+        let p=preview(&app,1,&r.id,&w,None).unwrap();
+        let (next,_)=create(&app,1,&r.id,w,None,&p.token).await.unwrap();
+        assert_eq!(next.workspace,r.workspace);
+        assert!(!app.data.join(format!("users/1/workspaces/{}",next.id)).exists());
+        std::fs::set_permissions(&path,std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn direct_sources_keep_the_same_project() {
         let (_dir, app, mut r) = fixture().await;
         let root = app.sources.join("original");
         std::fs::create_dir_all(&root).unwrap();
@@ -1070,8 +1103,8 @@ runtime: "codex".into(),
         let w = insert(&r);
         let p = preview(&app, 1, &r.id, &w, None).unwrap();
         let (fork, _) = create(&app, 1, &r.id, w, None, &p.token).await.unwrap();
-        assert_eq!(fork.workflow.nodes[0].source_mode, "copy");
-        assert!(crate::source_access::paths(&fork.context).is_empty());
+        assert_eq!(fork.workflow.nodes[0].source_mode, "direct");
+        assert_eq!(crate::source_access::paths(&fork.context), vec![std::fs::canonicalize(&root).unwrap()]);
         crate::source_access::validate_bindings(&app, &fork).unwrap();
         assert_eq!(
             std::fs::read_to_string(Path::new(&fork.workspace).join("project.txt")).unwrap(),
