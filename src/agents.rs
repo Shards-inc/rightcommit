@@ -1344,11 +1344,14 @@ pub fn parse_result(text: &str) -> Result<AgentResult> {
         .and_then(|(_, s)| s.split_once("</nodo_result>").map(|(j, _)| j))
         .unwrap_or(text);
     let mut result:AgentResult=serde_json::from_str(raw.trim()).context("Risposta agente priva del risultato strutturato rightcommit. Riprendi nella stessa sessione con Retry.")?;
-    // Only public assistant text is collected by the adapters; reasoning events are excluded.
+    // Only the parser can attest that it truncated the public report.
+    result.details_truncated = false;
     if result.details.is_empty()
         && let Some((report, _)) = text.rsplit_once("<nodo_result>")
     {
-        result.details = report.trim().chars().take(16000).collect();
+        let mut chars = report.trim().chars();
+        result.details = chars.by_ref().take(16_000).collect();
+        result.details_truncated = chars.next().is_some();
     }
     ensure!(
         ["completed", "needs_input", "blocked"].contains(&result.status.as_str()),

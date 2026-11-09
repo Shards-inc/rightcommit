@@ -3,6 +3,45 @@
 What changed in each version of rightcommit. Releases are also listed on
 [GitHub](https://github.com/rightcommit/rightcommit/releases).
 
+## [1.3.0] - 2026-11-09
+
+### Added
+
+- **Set Prompt** in the node menu: right-click a Task, Review, Gate, A2A or Workflow node
+  to edit its prompt in a large editor. The workflow is saved when you confirm.
+- **Dismiss suggestion**: a Manager suggestion can now be dismissed without applying it.
+- Memory handoffs guide the source Task: when a Memory node follows a Task, the agent is
+  asked to report decisions and their reasons, constraints, the files to read, the next
+  step and open questions, and to say what it verified and what still needs checking.
+  For reports longer than 16,000 characters, the agent is asked to save the full text
+  under `.rightcommit/handoffs/` in the workspace and pass a summary with the file path,
+  so the next agent can read it.
+- When a source report is cut at 16,000 characters, the Memory node shows **Report
+  truncated** and the next agent is told that the report is incomplete.
+
+### Changed
+
+- When a run fails, the footer shows a short **Run error · See Activity Log** message.
+- The Manager view in FinOps is more compact: costs and the chart sit side by side.
+- The Manager and the in-app guide explain Memory handoffs in more detail: when to place
+  Task → Memory → Task, what is passed to the next agent, where long reports are saved and
+  what the **Report truncated** warning means. When explaining a run, the Manager checks
+  that a report file exists before saying it was saved.
+
+### Fixed
+
+- An applied or dismissed Manager suggestion no longer reappears after reloading the page
+  or switching workflows.
+
+### Security
+
+- Updated the MCP client library (rmcp 3.9.0). A malicious or compromised MCP server can no
+  longer exhaust memory by sending an endless HTTP response
+  ([RUSTSEC-2026-0462](https://rustsec.org/advisories/RUSTSEC-2026-0462)).
+- Updated the bundled SQLite (rusqlite 0.41). It fixes a read of uninitialized memory
+  when a database is opened together with a crafted `-wal` file
+  ([RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459)).
+
 ## [1.2.4] - 2026-11-06
 
 ### Added

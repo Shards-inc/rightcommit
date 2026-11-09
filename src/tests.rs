@@ -150,6 +150,27 @@ fn structured_results_fail_closed() {
     assert!(agents::parse_result("{\"status\":\"approved_by_human\"}").is_err());
 }
 #[test]
+fn report_truncation_counts_unicode_characters_and_only_marks_copied_text() {
+    let boundary = "à".repeat(16_000);
+    let result = r#"<nodo_result>{"status":"completed"}</nodo_result>"#;
+    let exact = agents::parse_result(&format!("{boundary}\n{result}")).unwrap();
+    assert_eq!(exact.details, boundary);
+    assert!(!exact.details_truncated);
+
+    let truncated = agents::parse_result(&format!("{boundary}🙂\n{result}")).unwrap();
+    assert_eq!(truncated.details, boundary);
+    assert!(truncated.details_truncated);
+    assert_eq!(serde_json::to_value(&truncated).unwrap()["details_truncated"], true);
+
+    let explicit = agents::parse_result(&format!(
+        "{boundary}🙂\n<nodo_result>{{\"status\":\"completed\",\"details\":\"Leggi handoffs/task.md\",\"details_truncated\":true}}</nodo_result>"
+    ))
+    .unwrap();
+    assert_eq!(explicit.details, "Leggi handoffs/task.md");
+    assert!(!explicit.details_truncated);
+}
+
+#[test]
 fn truncated_ci_cannot_approve_delivery() {
     let good = serde_json::json!({"total_count":1,"check_runs":[{"status":"completed","conclusion":"success"}]});
     crate::connectors::validate_ci(&good).unwrap();

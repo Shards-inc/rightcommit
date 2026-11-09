@@ -100,6 +100,10 @@ pub fn router(app: App) -> Router {
             axum::routing::post(crate::manager::reset),
         )
         .route(
+            "/api/manager/chat/proposal/resolve",
+            axum::routing::post(crate::manager::resolve_proposal),
+        )
+        .route(
             "/manager.js",
             axum::routing::get(|| async {
                 (

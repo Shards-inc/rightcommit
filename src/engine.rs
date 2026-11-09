@@ -505,6 +505,24 @@ fn reachable(w: &Workflow, a: &str, b: &str) -> bool {
     false
 }
 
+fn memory_source_instructions(workflow: &Workflow, task: &Node) -> &'static str {
+    if workflow.nodes.iter().any(|node| {
+        node.kind == "Memory"
+            && node.agent == task.id
+            && reachable(workflow, &task.id, &node.id)
+    }) {
+        "\nPassaggio di consegne via Memory: includi nel campo details del risultato, o nel report prima di <nodo_result>, \
+         decisioni e motivazioni, vincoli, file da consultare, prossimo passo e questioni aperte. Distingui ciò che hai \
+         verificato da ciò che resta da verificare. Prima di rispondere, conta i caratteri Unicode del report (non i token). \
+         Se supera 16.000 caratteri, salva il report completo in un file Markdown nel workspace, con un nome univoco \
+         sotto .rightcommit/handoffs/. Verifica che il file esista. Metti il percorso relativo e le sezioni da leggere all'inizio del \
+         riepilogo in summary, includi il percorso in artifacts e passa in details o nel report testuale solo un riepilogo \
+         entro 16.000 caratteri. Indica al prossimo agente di leggere il file prima di proseguire."
+    } else {
+        ""
+    }
+}
+
 pub async fn create(
     app: &App,
     uid: i64,
@@ -1157,8 +1175,9 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                     .context
                     .remove(&format!("feedback:{}", n.id))
                     .unwrap_or_default();
+                let memory_instructions = memory_source_instructions(&r.workflow, &n);
                 let prompt = format!(
-                    "{cmd}\n{scope}\nBinding Agent: {}\n{}\n{}\nHandoff esplicito: {handoff}\nRisposte registrate: {answer}\nFinding da correggere in questo rework: {feedback}",
+                    "{cmd}\n{scope}\nBinding Agent: {}\n{}{memory_instructions}\n{}\nHandoff esplicito: {handoff}\nRisposte registrate: {answer}\nFinding da correggere in questo rework: {feedback}",
                     n.agent,
                     n.prompt,
                     incoming(app, uid, &r)?
@@ -1347,10 +1366,9 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 out
             }
             "Memory" => {
-                ensure!(
-                    r.outputs.contains_key(&n.agent),
-                    "Memory: output Task sorgente assente"
-                );
+                let details_truncated = r.outputs.get(&n.agent)
+                    .context("Memory: output Task sorgente assente")?
+                    .details_truncated;
                 let text = handoff_package(app, uid, &r, &n.agent, &n.target)?;
                 r.context
                     .insert(format!("handoff:{}", n.target), text.clone());
@@ -1358,6 +1376,7 @@ async fn drive(app: &App, uid: i64, rid: &str) -> Result<()> {
                 AgentResult {
                     status: "completed".into(),
                     summary: text,
+                    details_truncated,
                     ..Default::default()
                 }
             }
@@ -1415,12 +1434,17 @@ fn handoff_package(app: &App, uid: i64, r: &Run, source: &str, target: &str) -> 
         .get(source)
         .context("Handoff: output sorgente assente")?;
     let arts = app.store.artifacts(uid, &r.id)?;
+    let limits = if output.details_truncated {
+        "Context handoff; native model-private state is not copied. The source report was truncated at 16,000 characters. Read the full report file if the source lists one. If essential context is missing, ask for clarification before proceeding."
+    } else {
+        "Context handoff; native model-private state is not copied."
+    };
     Ok(serde_json::to_string_pretty(&serde_json::json!({
         "schema":1, "source_task":source, "source_output":output,
         "target_agent":target, "request":r.input,
         "decisions":app.store.decisions(uid,&r.id)?,
         "artifacts":arts.iter().map(|a|serde_json::json!({"id":a.id,"path":a.path,"version":a.version,"sha256":a.hash})).collect::<Vec<_>>(),
-        "limits":"Context handoff; native model-private state is not copied."
+        "limits":limits
     }))?)
 }
 
@@ -1456,6 +1480,7 @@ fn join_handoffs(app: &App, uid: i64, r: &mut Run, join: &Node) -> Result<()> {
 fn parallel_prompt(app: &App, uid: i64, branch: &Run, task: &Node, fork: &Node) -> Result<String> {
     let (rt, _, _, _) = runtime(branch, &task.agent)?;
     let cmd = agents::resolve_command(&task.command, &rt, Path::new(&branch.workspace))?;
+    let memory_instructions = memory_source_instructions(&branch.workflow, task);
     let handoff = if let Some(source) = branch
         .last_node
         .as_ref()
@@ -1470,7 +1495,7 @@ fn parallel_prompt(app: &App, uid: i64, branch: &Run, task: &Node, fork: &Node) 
             .unwrap_or_default()
     };
     Ok(format!(
-        "{}\n{}\n{}\nHandoff esplicito: {}\nChiarimento per i rami: {}\nTask parallelo: workspace condiviso, rispetta i file assegnati al tuo ramo.",
+        "{}\n{}{memory_instructions}\n{}\nHandoff esplicito: {}\nChiarimento per i rami: {}\nTask parallelo: workspace condiviso, rispetta i file assegnati al tuo ramo.",
         cmd,
         task.prompt,
         incoming(app, uid, branch)?,
@@ -1875,6 +1900,43 @@ mod parallel_tests {
         }))
         .unwrap()
     }
+    #[tokio::test]
+    async fn memory_preserves_source_report_truncation_in_run_and_handoff() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::tests::app(dir.path());
+        let mut w = graph();
+        w.entry = "a".into();
+        w.nodes.retain(|n| !["fork", "join", "b", "ab"].contains(&n.id.as_str()));
+        w.nodes.push(serde_json::from_value(serde_json::json!({
+            "id":"memory","kind":"Memory","agent":"a","target":"aa"
+        })).unwrap());
+        w.edges.retain(|e| e.kind == "context" && e.to != "b");
+        w.edges.push(Edge {
+            from: "a".into(),
+            to: "memory".into(),
+            kind: "control".into(),
+            outcome: String::new(),
+        });
+        assert!(memory_source_instructions(&w, w.node("a").unwrap()).contains(".rightcommit/handoffs/"));
+
+        let mut run = create(&app, 1, w, "handoff".into(), None).await.unwrap();
+        run.current = "memory".into();
+        run.states.insert("a".into(), "completed".into());
+        run.outputs.insert("a".into(), AgentResult {
+            details_truncated: true,
+            ..completed("Source report")
+        });
+        save(&app, 1, &mut run).unwrap();
+        drive(&app, 1, &run.id).await.unwrap();
+
+        let saved = app.store.run(1, &run.id).unwrap();
+        assert_eq!(saved.states["memory"], "completed");
+        assert!(saved.outputs["memory"].details_truncated);
+        let handoff: serde_json::Value = serde_json::from_str(&saved.context["handoff:aa"]).unwrap();
+        assert_eq!(handoff["source_output"]["details_truncated"], true);
+        assert!(handoff["limits"].as_str().unwrap().contains("source report was truncated"));
+    }
+
     #[tokio::test]
     async fn skipped_parallel_tasks_make_no_calls_and_contribute_no_outputs() {
         let dir = tempfile::tempdir().unwrap();

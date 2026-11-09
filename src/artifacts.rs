@@ -803,6 +803,7 @@ pub fn file_info(app: &App, uid: i64, run: &Run, artifact: &Artifact) -> Artifac
     info
 }
 
+#[cfg(test)]
 pub fn rebase(app: &App, uid: i64, old: &Run, new: &Run, artifact: &mut Artifact) {
     let Some(file) = &mut artifact.file else {
         return;

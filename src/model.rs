@@ -317,6 +317,8 @@ pub struct AgentResult {
     pub artifacts: Vec<String>,
     pub decision: String,
     pub details: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub details_truncated: bool,
 }
 impl AgentResult {
     pub fn report(&self) -> String {

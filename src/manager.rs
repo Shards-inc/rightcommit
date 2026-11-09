@@ -26,6 +26,7 @@ The current permissions appended to this turn reflect Personal Settings / Manage
 Use Markdown in your user-facing summary. For design requests reason from the user's goal: identify inputs, deliverables, responsible agents, ordered tasks, checks and delivery. Reuse configured services and relevant existing nodes; preserve unrelated content and comments. When the user delegates choices (e.g. "inventa tu"), make reasonable concrete choices and build the graph instead of asking repeatedly. A safe example Source is ALWAYS available: source_type example, location empty. It is usable even if /sources has no files. A root workflow needs a Source to run.
 To add a single node or incrementally design a graph, incomplete DRAFTS are allowed: add the requested node even if it is not connected yet or needs agent/configuration selection. State clearly what remains before execution. Do not refuse an editor change because the graph is not runnable yet. For a request to build a complete workflow, aim to satisfy all run requirements and fix errors automatically when the controller returns validation feedback.
 Read guide.connection_rules and allowed_edges carefully. context configures capabilities; control orders executable steps; rework is a bounded correction branch. Source→Agent/Connection/Workflow, Agent→Task (Task.agent must equal Agent.id), MCP/RAG→Agent use context. Agent bindings on Review/Gate are fields, NOT Agent→Review/Gate edges. Every Gate outcome except needs_info/blocked needs a REAL edge target: a pass that finishes needs a terminal Task, human Review or Connection, not an imaginary "end". Review success normally uses outcome empty and its correction edge uses rework. Do not create forward cycles. Parallel execution uses Fork.target=Join ID with at least two disjoint Task chains ending at that Join; each branch needs distinct Agent bindings. Branches share the workspace: assign separate files. No other node kinds or nested forks inside parallel branches. Fork automatically hands the preceding output to each branch Agent; Join collects all branch outputs and hands them to downstream Task Agents. No Memory is required across Fork/Join boundaries. Different agents in other successive tasks require Memory with agent=source Task ID, target=destination Agent ID. Comment has no edges and is never entry. Entry is an executable node, not Source/Agent/MCP/RAG/Comment. Choose the start explicitly using workflow.entry = the executable node ID. The graph shows this node with a filled dot inside a ring in its upper-left corner; the context-menu action is “Imposta come inizio” / “Set as start”. There is exactly one start; its canvas position does not select it. To move the start, update workflow.entry in the complete proposed graph, preserve unrelated nodes/edges and check that all executable nodes remain reachable from that entry. A Task with skip=true CAN be the start: it is visited as a no-op and then follows its normal continuation to the next node, including a Gate. Never infer the start from the leftmost node or the last selected node. Preserve the existing start unless the requested change requires moving it, and explain start changes.
+When explaining or designing Memory, follow guide.connection_rules.memory_handoff. The engine already adds report and file instructions to source Tasks. Add workflow-specific handoff requirements only when useful. When explaining an actual run, use the Memory output's details_truncated flag. Verify the file exists before claiming it was saved, and look for evidence from the receiving Task before claiming it read the file.
 Choose Fork/Join when two or more tasks can independently use the same prepared input and their results must later be combined (for example, independent research or reviews). Keep dependent tasks sequential; do not add parallelism only for appearance. Prefer the direct pattern Coordinator Task -> Fork -> distinct Agent Task chains -> Join -> synthesis Task when it fits; a child Workflow is optional for reuse or organization, not required for cross-agent handoffs. The Coordinator must put the actionable plan, branch assignments, constraints and expected deliverables in its actual Task output before the Fork. Each branch prompt must specify its own scope, separate output files if needed, and an explicit result summary; branches cannot rely on sibling results before the Join. Put a synthesis Task after the Join, often bound to the original Coordinator, and instruct it to use every branch result, reconcile disagreements and report missing evidence. Fork/Join transfer explicit outputs and artifact references, not private reasoning or another Agent's native session. Do not claim a plan or synthesis was produced until run evidence shows it.
 All kinds in guide.node_templates are available, including Source, Agent, Task, Review, Fork, Join, Gate, Memory, Connection, Workflow, MCP, RAG, A2A and Comment. IDs use only ASCII letters/numbers/-/_. Do not invent service IDs, credentials, repositories or source paths. Leave an explicit unconfigured draft field if necessary and explain it. New folder Sources use direct mode; remote Git always clones; preserve existing Source modes unless asked. Task.command can be empty for a general task; only use installed Spec Kit commands when appropriate. Task.skip is a boolean, false by default, exposed as “Salta task” / “Skip task” (also called “salta nodo” by the user). It applies only to Task nodes, not Gates, Reviews or other node kinds. A skipped Task may have an empty prompt; a normally executed Task must have a non-empty prompt. Set skip=true when the user asks to bypass a Task or when an optional step should be temporarily excluded; preserve its ID, agent, prompt, command and edges. Set skip=false to restore it. A skipped Task performs no agent/tool calls, produces no output or artifacts and continues on its normal empty-outcome control edge; it does not stop the workflow. Its run state is bypassed (Skipped), distinct from an unvisited branch. This also works in Fork branches, where skipped Tasks contribute no result to the Join. Do not skip required deliverables or checks silently; explain the choice. Never invent skipped outputs or silently reuse earlier results. If Memory needs that Task's output, rewire the dependency or leave the Task enabled; validation rejects a skipped Memory source. Run configurations remain frozen: propose draft changes, then use the normal preview/confirmation for Edit and continue.
 For workflow design changes, return the COMPLETE graph in details, not just a drawing, prose plan or snippets. The app validates and applies it to the current editor. It saves only on Save, runs only on Run, and never changes an active/historical run. Run-view changes open a separate draft. You may read evidence and, only when current permissions enable writing, write or edit files requested by the user. Preserve unrelated files and the generated context snapshots. When current permissions enable shell tools, you may use local commands to inspect or update the requested files, but must not execute other agents, read credentials, contact services or approve/run a workflow.
@@ -46,6 +47,10 @@ pub struct Message {
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct PendingWorkflow {
+    #[serde(default)]
+    id: String,
+    #[serde(default, alias = "applied")]
+    resolved: bool,
     workflow: Workflow,
     kind: String,
     warning: Option<String>,
@@ -75,6 +80,11 @@ struct Chat {
 pub struct Scope {
     workflow_id: String,
     run_id: Option<String>,
+}
+#[derive(Deserialize)]
+pub struct ResolvedProposal {
+    conversation_id: String,
+    proposal_id: String,
 }
 #[derive(Deserialize)]
 pub struct Request {
@@ -138,7 +148,12 @@ fn load_target(
 }
 fn save(app: &App, uid: i64, chat: &Chat) -> Result<()> {
     app.store.db.lock().unwrap().execute(
-        "UPDATE manager_chats SET json=? WHERE id=? AND user_id=?",
+        "UPDATE manager_chats SET json=CASE
+         WHEN coalesce(json_extract(json,'$.proposal.resolved'),json_extract(json,'$.proposal.applied'))=1
+          AND json_type(?1,'$.proposal')='object'
+          AND coalesce(json_extract(json,'$.proposal.id'),'')=json_extract(?1,'$.proposal.id')
+         THEN json_set(?1,'$.proposal.resolved',json('true'))
+         ELSE ?1 END WHERE id=?2 AND user_id=?3",
         params![serde_json::to_string(chat)?, chat.id, uid],
     )?;
     Ok(())
@@ -192,7 +207,7 @@ pub async fn history(
     check_scope(&app, u.id, &q.workflow_id, q.run_id.as_deref())?;
     let record = load_target(&app, u.id, &q.workflow_id, q.run_id.as_deref(), None)?;
     Ok(Json(
-        json!({"messages":messages_public(record.as_ref().map(|r|r.messages.as_slice()).unwrap_or(&[])),"conversation_id":record.as_ref().map(|r|&r.id),"proposal":record.as_ref().filter(|r|r.workflow_id==q.workflow_id&&r.run_id==q.run_id).and_then(|r|r.proposal.as_ref()),"runtime":record.as_ref().and_then(|r|r.runtime.sessions.get(BINDING)).map(|s|&s.runtime)}),
+        json!({"messages":messages_public(record.as_ref().map(|r|r.messages.as_slice()).unwrap_or(&[])),"conversation_id":record.as_ref().map(|r|&r.id),"proposal":record.as_ref().filter(|r|r.workflow_id==q.workflow_id&&r.run_id==q.run_id).and_then(|r|r.proposal.as_ref()).filter(|p|!p.resolved),"runtime":record.as_ref().and_then(|r|r.runtime.sessions.get(BINDING)).map(|s|&s.runtime)}),
     ))
 }
 pub(crate) fn runtime_run(id: &str, workflow: &Workflow, workspace: PathBuf) -> Run {
@@ -372,6 +387,17 @@ fn design_guide(app: &App, uid: i64) -> Result<Value> {
             "review":"Bind the reviewing Agent in Review.agent; modes human/agent/agent_and_human. Success control outcome is empty; rejection/correction uses rework to Task or Workflow.",
             "gate":"List outcomes explicitly. EACH outcome except needs_info/blocked needs an edge with exactly that outcome. pass must target a real terminal node, not an imaginary end. rework goes to Task/Workflow with outcome rework and max_rework 1–5.",
             "memory":"Required between sequential tasks that switch agents, except across Fork/Join automatic handoffs: Memory.agent is the source TASK ID, Memory.target is the destination AGENT ID. Order TaskA -> Memory -> TaskB through control; configure both Agents via Source context and their Task.agent fields.",
+            "memory_handoff":concat!(
+                "Memory gives the receiving Task the structured source result, original run request, recorded decisions and artifact references. ",
+                "Native sessions stay separate. The engine automatically asks the source Task to report decisions, reasons, constraints, files and next steps. ",
+                "For a report over 16,000 Unicode characters, the source Agent should save the complete Markdown report under .rightcommit/handoffs/ ",
+                "in the shared workspace and send a short summary, relative path and sections to read. The receiving Agent opens the file in the workspace. ",
+                "The 16,000-character cap applies only when the parser copies the public text before <nodo_result> into empty details. ",
+                "It does not cap explicit details or the entire handoff. If that copy is actually cut, the Memory node shows an amber Report truncated warning ",
+                "and the recipient receives details_truncated and a warning in the handoff. The run can continue. ",
+                "If essential context is missing, consult the full report if it exists or ask the source Task to save it. ",
+                "A file created as instructed with a short inline summary does not by itself trigger the warning."
+            ),
             "skip_task":"Task.skip is boolean, false by default, and applies only to Task nodes. A skipped Task may have an empty prompt and may be workflow.entry. true bypasses the Task without agent/tool calls, output or artifacts and follows the empty-outcome continuation. Preserve configuration and edges; false restores execution. State bypassed is distinct from unvisited/skipped. Supported in parallel branches; Join omits bypassed results. Memory cannot use a skipped Task as source. Explain optional bypasses; do not silently skip required work or reuse old outputs. Historical/active runs are immutable; change the draft.",
             "start_node":"Set workflow.entry to exactly one executable node ID. The upper-left filled dot inside a ring marks it; context-menu action: Imposta come inizio / Set as start. Canvas position does not choose the start. A skipped Task can be the start and continues as a no-op. Preserve the current start unless the requested change requires moving it, explain changes and ensure all executable nodes remain reachable. Source, Agent, MCP, RAG and Comment cannot be entry. Changes apply to the draft; historical/active run configurations stay frozen.",
             "runnable":"At least one Source for a root workflow, executable entry, all steps reachable, agents/configuration selected, non-skipped Task prompts filled (empty is allowed when Task.skip=true), Gate branches complete. A child workflow may inherit Source/workspace from its parent.",
@@ -619,8 +645,11 @@ pub async fn chat(
     } else {
         out.decision.clone()
     };
-    if let Some(w) = &workflow {
+    let proposal_id = workflow.as_ref().map(|_| id());
+    if let Some((w, proposal_id)) = workflow.as_ref().zip(proposal_id.as_ref()) {
         record.proposal = Some(PendingWorkflow {
+            id: proposal_id.clone(),
+            resolved: false,
             workflow: w.clone(),
             kind: kind.clone(),
             warning: warning.clone(),
@@ -633,8 +662,23 @@ pub async fn chat(
     });
     save(&app, u.id, &record)?;
     Ok(Json(
-        json!({"messages":messages_public(&record.messages),"workflow":workflow,"kind":kind,"validation_warning":warning,"conversation_id":record.id,"runtime":runtime,"snapshot_at":snapshot_at}),
+        json!({"messages":messages_public(&record.messages),"workflow":workflow,"proposal_id":proposal_id,"kind":kind,"validation_warning":warning,"conversation_id":record.id,"runtime":runtime,"snapshot_at":snapshot_at}),
     ))
+}
+
+pub async fn resolve_proposal(
+    State(app): State<App>,
+    u: User,
+    Json(proposal): Json<ResolvedProposal>,
+) -> ApiResult<Json<Value>> {
+    // Keep the proposal available for recovering a newly created draft's chat.
+    app.store.db.lock().unwrap().execute(
+        "UPDATE manager_chats SET json=json_set(json_remove(json,'$.proposal.applied'),'$.proposal.resolved',json('true'))
+         WHERE user_id=? AND id=? AND json_type(json,'$.proposal')='object'
+         AND coalesce(json_extract(json,'$.proposal.id'),'')=?",
+        params![u.id, proposal.conversation_id, proposal.proposal_id],
+    ).map_err(anyhow::Error::from)?;
+    Ok(Json(json!({"ok":true})))
 }
 
 pub async fn reset(
@@ -1057,6 +1101,8 @@ runtime: "codex".into(),
         let mut next = req.workflow.clone();
         next.id = id();
         record.proposal = Some(PendingWorkflow {
+            id: id(),
+            resolved: false,
             workflow: next.clone(),
             kind: "create".into(),
             warning: None,
