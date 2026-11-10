@@ -18,59 +18,88 @@
 </p>
 
 <p align="center">
-  Self-hosted orchestration for Claude Code, Codex and Pi Agent.<br>
-  Parallel workflows, full control over every commit, and FinOps that shows exactly what each
-  agent and model costs.
+  Self-hosted orchestration for Claude Code, Codex, and Pi.<br>
+  Describe what you want to automate and the <strong>Project Manager</strong> drafts
+  an editable workflow on the visual canvas.
 </p>
 
 <p align="center">
   <a href="https://rightcommit.com"><strong>Website</strong></a> ·
-  <a href="https://github.com/rightcommit/rightcommit"><strong>GitHub</strong></a> ·
   <a href="#quickstart"><strong>Quickstart</strong></a> ·
   <a href="#documentation"><strong>Docs</strong></a> ·
+  <a href="#contributing"><strong>Contribute</strong></a> ·
   <a href="#license"><strong>License</strong></a>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-6254e8" alt="License: Apache 2.0"></a>
   <img src="https://img.shields.io/badge/built%20with-Rust-b7410e" alt="Built with Rust">
-  <img src="https://img.shields.io/badge/runs%20in-one%20container-2496ed" alt="Runs in one container">
+  <a href="https://github.com/rightcommit/rightcommit/actions/workflows/docker-check.yml"><img src="https://github.com/rightcommit/rightcommit/actions/workflows/docker-check.yml/badge.svg?branch=main" alt="Docker image checks"></a>
+  <a href="https://github.com/rightcommit/rightcommit/actions/workflows/package-check.yml"><img src="https://github.com/rightcommit/rightcommit/actions/workflows/package-check.yml/badge.svg?branch=main" alt="Installable package checks"></a>
+  <a href="https://github.com/rightcommit/rightcommit/stargazers"><img src="https://img.shields.io/github/stars/rightcommit/rightcommit?style=social" alt="GitHub stars"></a>
 </p>
 
 ---
 
-![rightcommit Agent Studio showing a workflow on the visual canvas](https://raw.githubusercontent.com/rightcommit/rightcommit/main/.github/assets/rightcommit-demo-page-3.png)
+![rightcommit demo showing the Project Manager drafting a workflow, then execution, tests, review, a local commit, and FinOps](.github/assets/rightcommit-walkthrough.gif)
+
+## Quickstart
+
+### Docker
+
+Start Docker, then run the command below to clone and start rightcommit.
+
+```sh
+git clone https://github.com/rightcommit/rightcommit.git && cd rightcommit && docker compose up -d --build
+```
+
+The first build can take several minutes. For a ZIP download or step-by-step instructions, see the
+[Docker install guide](INSTALL.md).
+
+### Homebrew on macOS
+
+```sh
+brew install rightcommit/tap/rightcommit
+mkdir -p ~/rightcommit && cd ~/rightcommit
+rightcommit setup
+rightcommit
+```
+
+Run `rightcommit setup` once to install the agents. Launch `rightcommit` from the same folder
+on future starts to reuse your data. See the [macOS install guide](INSTALL_MAC.md).
+
+### Run your first workflow
+
+1. Open <http://localhost:8080>. The first account becomes the administrator, and public sign-up
+   closes by default.
+2. In **Personal settings → Agents**, configure an API key or authorized provider for at least
+   one agent and pick a model. See [Configuring the agents](#configuring-the-agents).
+3. Press **+** to pick a ready-made workflow, or describe one to the **Project Manager**. Check
+   the draft on the canvas and run it.
+
+**[Star rightcommit](https://github.com/rightcommit/rightcommit)** if you find it useful.
+[Report a bug or suggest an idea](https://github.com/rightcommit/rightcommit/issues),
+or see [how to contribute](CONTRIBUTING.md).
 
 ## Why rightcommit
 
-AI coding agents are fast, but "done" often means "I stopped". rightcommit puts the agents
-inside a workflow you can see and control: work moves on only when there is proof. The task
-list is complete, the server has run the tests, a second agent has reviewed the result, and
-you have approved it. Only then is a commit made.
-
-You design the workflow on a visual canvas, or describe it and let the built-in Project
-Manager draft it. A Rust engine runs the agents and tools, keeps the execution state, checks
-the quality and sends work back for fixes when a check fails.
-
-Learn more at **[rightcommit.com](https://rightcommit.com)**.
+- **Verified commits.** Build workflows that require passing tests, agent review, and human
+  approval before a commit.
+- **Coordinated agents.** Assign Claude Code, Codex, or Pi to different steps in the same workflow.
+- **Transparent costs.** See costs and tokens by agent, model, and run in FinOps.
 
 ## What you get
 
 - **Agentic workflow orchestration.** Design and run workflows that combine AI agents
   and tools. Workflows can be exposed as A2A-compatible agents.
-- **Verified outcomes.** Tasks must be ticked, tests run on the server and a second agent
-  (even a different one) reviews the work. If anything changes after the tests, tests and
-  review run again.
+- **Quality gates.** Check that tasks are closed, run tests on the server, and recheck
+  results when files change after testing.
 - **Traceable work.** Every step saves its files as versions with a SHA-256 fingerprint and
   a line-by-line diff. Failed checks send the work back for correction, within a set number
   of attempts.
-- **Transparent costs.** The FinOps panel shows cost and tokens per step, run, workflow,
-  agent and model. Reported and estimated costs are always kept apart.
 - **A workflow that fits the job.** Three steps or a full delivery pipeline. Start from one
   of the ready-made workflows, such as Spec Kit specification → plan → tasks → implementation,
   or build your own.
-- **Your agents, coordinated.** Claude Code, Codex and Pi in one workspace. Each step uses
-  the agent and model you picked, with no silent fallback. Model-agnostic by design.
 - **You stay in control.** Run interactively, assisted or unattended. Pause for human
   decisions and resume where you left off.
 - **Not only code.** The same blocks can run research, document analysis or reporting workflows.
@@ -95,41 +124,16 @@ and do not imply affiliation or endorsement.
 - **Developers** running agents on their own laptop, with their own keys.
 - **Small teams** who prefer to self-host, with separate users, keys and workspaces.
 
-## Quickstart
+## Other ways to install
 
-You need [Docker](https://www.docker.com/products/docker-desktop/) and an API key or authorized provider configuration for at
-least one agent (Claude Code, Codex or Pi).
+| Guide | For |
+|---|---|
+| [INSTALL.md](INSTALL.md) | Docker on macOS, Windows and Linux, step by step |
+| [INSTALL_MAC.md](INSTALL_MAC.md) | macOS without containers: Homebrew, crates.io or source |
+| [INSTALL_LINUX.md](INSTALL_LINUX.md) | Linux and WSL2 without containers: crates.io or source |
+| [INSTALL_PODMAN.md](INSTALL_PODMAN.md) | Podman instead of Docker |
 
-**1. Get rightcommit.**
-
-```sh
-git clone https://github.com/rightcommit/rightcommit.git
-cd rightcommit
-```
-
-No Git? Click **Code** → **Download ZIP** on this page, extract it and open a terminal in the
-extracted folder (the one with `compose.yaml`).
-
-**2. Start the container.**
-
-```sh
-docker compose up -d --build
-```
-
-The first build downloads a lot of files and takes a few minutes.
-
-**3. Create the first account.** Open <http://localhost:8080>. The first user becomes the
-administrator, and public sign-up closes after that.
-
-**4. Connect an agent.** Open **Personal settings** → **Agents**, add your key and pick a
-model. Keys are encrypted in the database (AES-256-GCM) and never sent back to the browser.
-For API keys, gateways, cloud providers and local models, see
-[Configuring the agents](#configuring-the-agents).
-
-**5. Run a workflow.** Press **+**, choose a ready-made workflow (or ask the Project Manager to
-draft one) and run it.
-
-Useful commands:
+### Managing the Docker install
 
 | What | Command |
 |---|---|
@@ -141,16 +145,7 @@ Useful commands:
 > Never run `docker compose down -v`: it deletes the `rightcommit-data` volume, with all
 > accounts, workflows and keys.
 
-By default the app listens only on `localhost`. Your code and keys stay on your machine.
-
-## Other ways to install
-
-| Guide | For |
-|---|---|
-| [INSTALL.md](INSTALL.md) | Docker on macOS, Windows and Linux, step by step |
-| [INSTALL_MAC.md](INSTALL_MAC.md) | macOS without containers: Homebrew, crates.io or source |
-| [INSTALL_LINUX.md](INSTALL_LINUX.md) | Linux and WSL2 without containers: crates.io or source |
-| [INSTALL_PODMAN.md](INSTALL_PODMAN.md) | Podman instead of Docker |
+By default, Docker Compose binds the app to localhost.
 
 ## Configuring the agents
 
