@@ -230,3 +230,82 @@ mod node_target_tests {
         assert_eq!(node_config(&Node { target: "workflow/repo".into(), ..Default::default() }, &saved).unwrap().repository, "workflow/repo");
     }
 }
+
+#[cfg(test)]
+mod base_tests {
+    use super::*;
+    use std::process::Command;
+
+    const CHILD_MARKER: &str = "RIGHTCOMMIT_CONNECTORS_BASE_TEST_CHILD";
+    const EXPECT_CUSTOM: &str = "RIGHTCOMMIT_CONNECTORS_BASE_TEST_EXPECT_CUSTOM";
+    const CHILD_TEST: &str = "connectors::base_tests::host_allowlist_is_hermetic";
+
+    fn config(base_url: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            base_url: base_url.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn host_allowlist_is_hermetic() {
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let expect_custom = std::env::var(EXPECT_CUSTOM).unwrap() == "true";
+
+            for (url, expected) in [
+                ("https://api.github.com", "https://api.github.com"),
+                ("https://dev.azure.com/org", "https://dev.azure.com/org"),
+                (
+                    "https://example.service-now.com",
+                    "https://example.service-now.com",
+                ),
+                ("https://api.github.com///", "https://api.github.com"),
+            ] {
+                assert_eq!(base(&config(url)).unwrap(), expected);
+            }
+
+            for url in [
+                "http://api.github.com",
+                "https://user:password@api.github.com",
+                "https://api.github.com?token=value",
+                "https://api.github.com#fragment",
+                "https://unknown.example",
+            ] {
+                assert!(base(&config(url)).is_err(), "unexpectedly accepted {url}");
+            }
+
+            assert_eq!(
+                base(&config("https://custom.example")).is_ok(),
+                expect_custom
+            );
+            return;
+        }
+
+        let executable = std::env::current_exe().unwrap();
+
+        for (override_hosts, expect_custom) in [
+            (Some("custom.example"), true),
+            (Some("another.example"), false),
+            (None, false),
+        ] {
+            let mut command = Command::new(&executable);
+
+            command
+                .args(["--exact", CHILD_TEST, "--nocapture"])
+                .env(CHILD_MARKER, "1")
+                .env(EXPECT_CUSTOM, expect_custom.to_string());
+
+            if let Some(hosts) = override_hosts {
+                command.env("NODO_CONNECTOR_HOSTS", hosts);
+            } else {
+                command.env_remove("NODO_CONNECTOR_HOSTS");
+            }
+
+            let status = command
+                .status()
+                .expect("failed to run isolated test process");
+
+            assert!(status.success(), "isolated allowlist cases failed");
+        }
+    }
+}
