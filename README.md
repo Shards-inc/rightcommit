@@ -13,6 +13,10 @@
   </a>
 </h1>
 
+English | [简体中文](README_zh-CN.md)
+
+<!-- Keep README_zh-CN.md in sync when updating this README. -->
+
 <p align="center">
   <strong>AI agents say “done”. rightcommit proves it.</strong>
 </p>
